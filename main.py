@@ -31,6 +31,7 @@ from aiogram.utils.chat_action import ChatActionMiddleware
 from aiogram.utils.markdown import hbold, hcode, hpre, hide_link, hitalic
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.exceptions import TelegramAPIError
+from aiogram.client.default import DefaultBotProperties
 
 import speech_recognition as sr
 from pydub import AudioSegment
@@ -748,7 +749,7 @@ async def scheduled_tasks():
 async def main():
     """Main function"""
     # Initialize the bot and dispatcher
-    bot = Bot(token=TELEGRAM_BOT_TOKEN, parse_mode=ParseMode.HTML)
+    bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     
     # Add middleware
