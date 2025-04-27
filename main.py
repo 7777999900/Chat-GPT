@@ -58,9 +58,6 @@ ALLOWED_USER_IDS = os.getenv("ALLOWED_USER_IDS", "*")  # "*" means everyone is a
 MAX_MESSAGES_PER_DAY = int(os.getenv("MAX_MESSAGES_PER_DAY", "50"))
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "50"))
 HISTORY_EXPIRATION_HOURS = int(os.getenv("HISTORY_EXPIRATION_HOURS", "24"))
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "")
-WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}" if WEBHOOK_HOST else None
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
 
 # Initialize the router
@@ -761,56 +758,9 @@ async def main():
     # Start scheduled tasks
     asyncio.create_task(scheduled_tasks())
     
-    # Delete webhook if exists
-    await bot.delete_webhook(drop_pending_updates=True)
-    
-    # Start polling or set up webhook
-    if WEBHOOK_URL:
-        # Set webhook
-        await bot.set_webhook(url=WEBHOOK_URL)
-        
-        # Start webhook server
-        logger.info(f"Starting webhook server on {WEBHOOK_HOST}{WEBHOOK_PATH}")
-        
-        # Start aiohttp server
-        from aiohttp import web
-        
-        app = web.Application()
-        
-        async def handle_webhook(request):
-            if request.path == WEBHOOK_PATH:
-                request_body_bytes = await request.read()
-                request_body_text = request_body_bytes.decode('utf-8')
-                update = types.Update.model_validate_json(request_body_text)
-                await dp.feed_update(bot, update)
-                return web.Response(text="OK")
-            return web.Response(text="NOT FOUND", status=404)
-        
-        app.router.add_post(WEBHOOK_PATH, handle_webhook)
-        
-        # Use health check endpoint for UptimeRobot
-        async def health_check(request):
-            return web.Response(text="OK")
-        
-        app.router.add_get("/health", health_check)
-        
-        # Start web server
-        web_runner = web.AppRunner(app)
-        await web_runner.setup()
-        
-        # Get port from environment or default to 8080
-        port = int(os.getenv("PORT", "8080"))
-        
-        site = web.TCPSite(web_runner, host="0.0.0.0", port=port)
-        await site.start()
-        
-        # Keep the server running
-        while True:
-            await asyncio.sleep(3600)
-    else:
-        # Start polling
-        logger.info("Starting bot with polling")
-        await dp.start_polling(bot)
+    # Start polling
+    logger.info("Starting bot with polling")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
