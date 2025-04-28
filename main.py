@@ -14,8 +14,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация бота
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_TOKEN"  # Замените на свой токен
-IONET_API_KEY = "YOUR_IO_NET_API_KEY"  # Замените на свой ключ API от io.net
+TELEGRAM_TOKEN = "8153698800:AAEtpJ5IlLTG9TIvpU4iM8EYagDkfdqGeeY"  # Замените на свой токен
+IONET_API_KEY = "io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6Ijc3YmJkZTE2LTIwZmQtNDI0OS1hNDUxLTRhNjFjZWZmNzFkZSIsImV4cCI6NDg5OTQyMDY5OX0.H8-y9vk5MF4T46gcVD_6NeEGP-4WaZUcqcNV5LJclahCOm8oC79no0Nv5hbIBj3ZW0XLI9uoRErKzd_K41N4_g"  # Замените на свой ключ API от io.net
 OWNER_USERNAME = "qqq5599"  # Имя владельца (без символа @)
 DEFAULT_DAILY_LIMIT = 10  # Лимит сообщений в день для обычных пользователей
 DATA_FILE = "bot_data.json"  # Файл для хранения данных пользователей
