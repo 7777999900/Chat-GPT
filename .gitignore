@@ -14,6 +14,7 @@ logs/
 
 # Данные
 data/
+/tmp/
 user_settings.json
 user_contexts.json
 model_performance.json
