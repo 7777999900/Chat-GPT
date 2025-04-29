@@ -6,9 +6,13 @@ import re
 import time
 import requests
 import traceback
+import threading
+import uuid
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Tuple
 from functools import wraps
+from aiohttp import web
+from urllib.parse import urlencode
 
 from aiogram import Bot, Dispatcher, Router, F, html
 from aiogram.filters import Command, CommandStart, StateFilter
@@ -25,6 +29,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.utils.chat_action import ChatActionMiddleware
 from aiogram.exceptions import TelegramAPIError
 
+# Получаем порт из переменной окружения или используем 8080 по умолчанию
+PORT = int(os.environ.get("PORT", 8080))
+APP_URL = os.environ.get("APP_URL", "")
+
 # Конфигурация путей для хранения данных на Render
 # На бесплатном плане можно писать только в /tmp (временное хранилище) 
 # или в директорию проекта /opt/render/project/src/
@@ -40,12 +48,12 @@ CONFIG = {
     "API_URL": "https://api.intelligence.io.solutions/api/v1",
     "TOKEN": os.environ.get("TELEGRAM_TOKEN", "7839597384:AAFlm4v3qcudhJfiFfshz1HW6xpKhtqlV5g"),
     "API_KEY": os.environ.get("AI_API_KEY", "io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6ImJlMjYwYjFhLWI0OWMtNDU2MC04ODZiLTMwYTBmMGFlNGZlNSIsImV4cCI6NDg5OTUwNzg0MH0.Z46h1WZ-2jsXyg43r2M0okgeLoSEzrq-ULHRMS-EW6r3ccxYkXTZ5mNJO5Aw1qBAkRI5NX9t8zXc1sbUxt8WzA"),
-    "DEFAULT_SYSTEM_PROMPT": "Вы - полезный AI-ассистент с энциклопедическими знаниями. Предоставляйте точные и информативные ответы. Вы знаете о различных исторических личностях, включая писателей, ученых и философов. Для технических вопросов и примеров кода используйте Markdown-форматирование.",
+    "DEFAULT_SYSTEM_PROMPT": "Вы - полезный AI-ассистент с энциклопедическими знаниями. Предоставляйте точные и информативные ответы. Вы обладаете обширными знаниями о различных исторических личностях, включая писателей, ученых и философов, таких как Пушкин, Толстой, Гоголь, Эйнштейн, Тесла, Ньютон, Сократ, и многих других. Для технических вопросов и примеров кода используйте Markdown-форматирование.",
     "MAX_MESSAGE_LENGTH": 4096,
-    "MAX_CONTEXT_LENGTH": 20,  # Увеличено для лучшей контекстной памяти
+    "MAX_CONTEXT_LENGTH": 20,  # Количество сообщений в истории
     "TEMPERATURE": 0.3,  # Уровень креативности (ниже = более предсказуемо)
     "MAX_TOKENS": 4000,  # Максимальная длина ответа
-    "RETRY_ATTEMPTS": 5,  # Увеличено число попыток при ошибке
+    "RETRY_ATTEMPTS": 5,  # Количество попыток при ошибке
     "ADMIN_IDS": [12345678],  # ID администраторов
     "ALLOWED_FORMATS": ["jpg", "jpeg", "png", "webp"],  # Поддерживаемые форматы изображений
     "MAX_FILE_SIZE": 10 * 1024 * 1024,  # Максимальный размер файла (10 МБ)
@@ -54,6 +62,47 @@ CONFIG = {
     "PERSISTENT_STORAGE": DATA_DIR,  # Директория для хранения данных (адаптировано для Render)
     "CONTEXT_DECAY": 0.9,  # Коэффициент важности старых сообщений в контексте (1.0 = все сообщения равнозначны)
     "REQUEST_TIMEOUT": 60,  # Таймаут запросов к API
+    "USE_WEBHOOK": True if APP_URL else False,  # Использовать webhook вместо polling если указан APP_URL
+    "MAX_INLINE_KEYBOARDS": 5,  # Максимальное количество кнопок в ряду для inline клавиатуры
+}
+
+# Сведения об исторических личностях
+HISTORICAL_FIGURES = {
+    "пушкин": {
+        "full_name": "Александр Сергеевич Пушкин",
+        "years": "1799-1837",
+        "category": "Поэт, драматург, прозаик, публицист, критик",
+        "description": "Величайший русский поэт, драматург и прозаик, основоположник современного русского литературного языка.",
+        "works": ["Евгений Онегин", "Руслан и Людмила", "Капитанская дочка", "Борис Годунов", "Медный всадник"],
+    },
+    "гоголь": {
+        "full_name": "Николай Васильевич Гоголь",
+        "years": "1809-1852",
+        "category": "Прозаик, драматург, поэт, критик, публицист",
+        "description": "Русский прозаик, драматург, поэт, критик, публицист, признанный одним из классиков русской литературы.",
+        "works": ["Мертвые души", "Ревизор", "Тарас Бульба", "Вечера на хуторе близ Диканьки", "Петербургские повести"],
+    },
+    "толстой": {
+        "full_name": "Лев Николаевич Толстой",
+        "years": "1828-1910",
+        "category": "Писатель, мыслитель",
+        "description": "Один из наиболее известных русских писателей и мыслителей, автор романов 'Война и мир', 'Анна Каренина', 'Воскресение'.",
+        "works": ["Война и мир", "Анна Каренина", "Воскресение", "Севастопольские рассказы", "Детство. Отрочество. Юность"],
+    },
+    "лермонтов": {
+        "full_name": "Михаил Юрьевич Лермонтов",
+        "years": "1814-1841",
+        "category": "Поэт, прозаик, драматург",
+        "description": "Русский поэт, прозаик, драматург, художник. Творчество Лермонтова, в котором сочетаются гражданские, философские и личные мотивы, отвечавшие насущным потребностям духовной жизни русского общества, ознаменовало собой новый расцвет русской литературы.",
+        "works": ["Герой нашего времени", "Мцыри", "Демон", "Бородино", "Маскарад"],
+    },
+    "эйнштейн": {
+        "full_name": "Альберт Эйнштейн",
+        "years": "1879-1955",
+        "category": "Физик-теоретик",
+        "description": "Физик-теоретик, один из основателей современной теоретической физики, лауреат Нобелевской премии по физике 1921 года, общественный деятель-гуманист.",
+        "discoveries": ["Теория относительности", "Фотоэлектрический эффект", "Броуновское движение", "E=mc²"],
+    },
 }
 
 # Категории моделей для более удобного представления
@@ -102,6 +151,8 @@ SPECIALIZED_MODELS = {
     "code": ["Qwen/Qwen2.5-Coder-32B-Instruct", "watt-ai/watt-tool-70B"],
     "math": ["nvidia/AceMath-7B-Instruct"],
     "reading": ["jinaai/ReaderLM-v2"],
+    "history": ["meta-llama/Llama-3.3-70B-Instruct", "mistralai/Mistral-Large-Instruct-2411"],
+    "literature": ["meta-llama/Llama-3.3-70B-Instruct", "mistralai/Mistral-Large-Instruct-2411"],
 }
 
 # Список всех моделей из категорий
@@ -143,6 +194,9 @@ TOPIC_PATTERNS = {
     "literature": r"(?i)(литератур|писатель|поэт|стих|роман|повесть|рассказ|книг|поэм)",
 }
 
+# Шаблоны для распознавания запросов об исторических личностях
+HISTORICAL_PATTERN = r"(?i)(?:кто (?:так(ой|ая|ое|ие)|был|явля(?:ет|л)ся|известен как)|расскаж(?:и|ите) (?:о|про|мне о|мне про)|что (?:ты |вы )?знаешь (?:о|про)|информаци[яю] (?:о|про))\s+([А-Яа-яЁё]+)"
+
 # Настройка логирования с защитой от ошибок файловой системы
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -177,6 +231,7 @@ class UserStates(StatesGroup):
     waiting_for_model_selection = State()  # Выбор модели
     waiting_for_temperature = State()  # Настройка temperature
     waiting_for_feedback = State()  # Ожидание отзыва о качестве ответа
+    waiting_for_direct_model = State()  # Ожидание ввода конкретной модели
 
 # Кэш и переменные для моделей
 model_cache = {}  # Кэш ответов моделей
@@ -184,6 +239,7 @@ user_settings = {}  # Настройки пользователей
 user_contexts = {}  # История диалогов с пользователями
 user_feedback = {}  # Отзывы пользователей о качестве ответов
 model_performance = {}  # Статистика производительности моделей (для адаптивного выбора)
+request_stats = {}  # Статистика запросов
 
 # Декоратор для сохранения контекста при исключениях
 def safe_execution(f):
@@ -234,6 +290,53 @@ def get_best_model_for_topic(topic: str) -> Optional[str]:
         import random
         return random.choice(SPECIALIZED_MODELS[topic])
     return None
+
+def clean_markdown(text: str) -> str:
+    """Очищает и исправляет потенциально неправильный Markdown в тексте."""
+    if not text:
+        return ""
+    
+    # Счетчики для проверки парности Markdown символов
+    backticks_count = text.count('`')
+    asterisk_count = text.count('*')
+    underscore_count = text.count('_')
+    
+    # Проверяем и исправляем непарные одиночные обратные кавычки
+    if backticks_count % 2 != 0:
+        # Находим последнюю обратную кавычку и удаляем её
+        last_backtick_pos = text.rfind('`')
+        if last_backtick_pos != -1:
+            text = text[:last_backtick_pos] + text[last_backtick_pos+1:]
+    
+    # Проверяем и исправляем блоки кода
+    code_blocks = re.findall(r'```[\s\S]*?```', text)
+    for block in code_blocks:
+        # Если блок кода не заканчивается правильно
+        if not block.endswith('```'):
+            text = text.replace(block, block + '```')
+    
+    # Находим незавершенные блоки кода (начинаются с ```, но не заканчиваются ```)
+    matches = re.finditer(r'```(?:[\s\S]*?)(?!```[\s\S]*?$)', text)
+    for match in matches:
+        start_pos = match.start()
+        # Добавляем закрывающий блок кода в конец
+        text += '\n```'
+    
+    # Проверяем и исправляем непарные звездочки для курсива/жирного
+    if asterisk_count % 2 != 0:
+        # Простая фиксация - удаляем последнюю звездочку
+        last_asterisk_pos = text.rfind('*')
+        if last_asterisk_pos != -1:
+            text = text[:last_asterisk_pos] + text[last_asterisk_pos+1:]
+    
+    # Проверяем и исправляем непарные подчеркивания для курсива
+    if underscore_count % 2 != 0:
+        # Простая фиксация - удаляем последнее подчеркивание
+        last_underscore_pos = text.rfind('_')
+        if last_underscore_pos != -1:
+            text = text[:last_underscore_pos] + text[last_underscore_pos+1:]
+    
+    return text
 
 def save_data_to_json(data: Any, filename: str) -> bool:
     """Безопасно сохраняет данные в JSON-файл с защитой от потери данных."""
@@ -307,6 +410,8 @@ def load_user_settings():
             user_settings[user_id]["preferred_topics"] = []
         if "last_active" not in settings:
             user_settings[user_id]["last_active"] = str(date.today())
+        if "favorite_models" not in settings:
+            user_settings[user_id]["favorite_models"] = []
 
     save_user_settings()
 
@@ -345,6 +450,25 @@ def load_model_performance():
     
     save_model_performance()
 
+def match_query_with_historical_figure(query: str) -> Optional[Tuple[str, dict]]:
+    """Проверяет, относится ли запрос к исторической личности, и возвращает информацию о ней."""
+    # Пытаемся найти шаблон "кто такой X" или "расскажи о X"
+    match = re.search(HISTORICAL_PATTERN, query)
+    if match:
+        person_name = match.group(2).lower()
+        
+        # Проверяем есть ли в нашей базе такая личность
+        for key, info in HISTORICAL_FIGURES.items():
+            if person_name in key or key in person_name:
+                return key, info
+    
+    # Также проверяем прямые упоминания в тексте
+    for key, info in HISTORICAL_FIGURES.items():
+        if key in query.lower():
+            return key, info
+    
+    return None
+
 async def show_typing_action(chat_id: int, duration: float = 2.0):
     """Показывает индикатор набора текста с указанной продолжительностью."""
     try:
@@ -362,7 +486,8 @@ def get_user_model(user_id: int, message_text: str = None) -> str:
             "temperature": CONFIG["TEMPERATURE"],
             "requests_left": 10,
             "last_reset": str(date.today()),
-            "preferred_topics": []
+            "preferred_topics": [],
+            "favorite_models": []
         }
         save_user_settings()
     
@@ -372,6 +497,14 @@ def get_user_model(user_id: int, message_text: str = None) -> str:
     # Если текст сообщения не предоставлен, возвращаем базовую модель
     if not message_text:
         return base_model
+    
+    # Проверка, относится ли запрос к исторической личности
+    historical_match = match_query_with_historical_figure(message_text)
+    if historical_match:
+        # Используем специализированную модель для исторических вопросов
+        if "history" in SPECIALIZED_MODELS and SPECIALIZED_MODELS["history"]:
+            import random
+            return random.choice(SPECIALIZED_MODELS["history"])
     
     # Определяем тему вопроса
     topic = detect_question_topic(message_text)
@@ -533,6 +666,66 @@ def record_model_performance(model: str, success: bool, response_time: float, to
     # Сохраняем обновленную статистику
     save_model_performance()
 
+def record_request_stat(user_id: int, success: bool, model: str, topic: Optional[str] = None):
+    """Записывает статистику запросов пользователя."""
+    if user_id not in request_stats:
+        request_stats[user_id] = {
+            "total": 0,
+            "successful": 0,
+            "failed": 0,
+            "models": {},
+            "topics": {}
+        }
+    
+    stats = request_stats[user_id]
+    stats["total"] += 1
+    
+    if success:
+        stats["successful"] += 1
+    else:
+        stats["failed"] += 1
+    
+    # Статистика по моделям
+    if model not in stats["models"]:
+        stats["models"][model] = {"count": 0, "successful": 0, "failed": 0}
+    
+    model_stats = stats["models"][model]
+    model_stats["count"] += 1
+    if success:
+        model_stats["successful"] += 1
+    else:
+        model_stats["failed"] += 1
+    
+    # Статистика по темам
+    if topic:
+        if topic not in stats["topics"]:
+            stats["topics"][topic] = {"count": 0, "successful": 0, "failed": 0}
+        
+        topic_stats = stats["topics"][topic]
+        topic_stats["count"] += 1
+        if success:
+            topic_stats["successful"] += 1
+        else:
+            topic_stats["failed"] += 1
+
+def get_historical_figure_response(figure_key: str, info: dict) -> str:
+    """Формирует ответ с информацией об исторической личности."""
+    response = f"# {info['full_name']} ({info['years']})\n\n"
+    response += f"**Категория**: {info['category']}\n\n"
+    response += f"**Описание**: {info['description']}\n\n"
+    
+    if "works" in info:
+        response += "**Известные произведения**:\n"
+        for i, work in enumerate(info["works"], 1):
+            response += f"{i}. {work}\n"
+    
+    if "discoveries" in info:
+        response += "**Известные открытия**:\n"
+        for i, discovery in enumerate(info["discoveries"], 1):
+            response += f"{i}. {discovery}\n"
+    
+    return response
+
 @safe_execution
 async def process_image(photo: PhotoSize) -> Optional[str]:
     """Обрабатывает изображение и возвращает его в base64 кодировке."""
@@ -572,17 +765,22 @@ async def split_and_send_message(message: Message, text: str, parse_mode: Option
     """Разделяет длинный текст на части и отправляет их."""
     max_length = CONFIG["MAX_MESSAGE_LENGTH"]
 
+    # Очищаем Markdown если он используется
+    if parse_mode == ParseMode.MARKDOWN:
+        text = clean_markdown(text)
+
     if len(text) <= max_length:
         try:
-            await message.answer(text, parse_mode=parse_mode)
+            return await message.answer(text, parse_mode=parse_mode)
         except TelegramAPIError as e:
             logger.warning(f"Ошибка при отправке сообщения: {e}")
             # Пробуем отправить без форматирования
             try:
-                await message.answer(text, parse_mode=None)
+                return await message.answer(text, parse_mode=None)
             except Exception as e2:
                 logger.error(f"Не удалось отправить сообщение даже без форматирования: {e2}")
-        return
+                return None
+        return None
 
     # Разбиваем на части с сохранением целостности блоков кода
     parts = []
@@ -615,17 +813,20 @@ async def split_and_send_message(message: Message, text: str, parse_mode: Option
         parts.append(current_part)
 
     # Отправляем все части
-    for part in parts:
+    last_message = None
+    for i, part in enumerate(parts):
         try:
-            await message.answer(part, parse_mode=parse_mode)
+            last_message = await message.answer(part, parse_mode=parse_mode)
         except TelegramAPIError as e:
             logger.warning(f"Ошибка при отправке части сообщения: {e}")
             # Пробуем отправить без форматирования
             try:
-                await message.answer(part, parse_mode=None)
+                last_message = await message.answer(part, parse_mode=None)
             except Exception as e2:
                 logger.error(f"Не удалось отправить часть сообщения даже без форматирования: {e2}")
         await asyncio.sleep(0.3)  # Небольшая задержка между сообщениями
+    
+    return last_message
 
 async def create_model_selection_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру для выбора модели по категориям."""
@@ -639,7 +840,49 @@ async def create_model_selection_keyboard() -> InlineKeyboardMarkup:
                 callback_data=f"category:{category}"
             )
         )
+    
+    # Добавляем кнопку для ввода конкретной модели
+    builder.row(
+        InlineKeyboardButton(
+            text="🔍 Ввести название модели вручную",
+            callback_data="enter_model_manually"
+        )
+    )
+    
+    # Показываем избранные модели, если они есть
+    favorite_models = user_settings.get(str(message.from_user.id), {}).get("favorite_models", [])
+    if favorite_models:
+        builder.row(
+            InlineKeyboardButton(
+                text="⭐ Избранные модели",
+                callback_data="favorite_models"
+            )
+        )
 
+    return builder.as_markup()
+
+async def create_favorite_models_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Создает клавиатуру с избранными моделями пользователя."""
+    builder = InlineKeyboardBuilder()
+    
+    favorite_models = user_settings.get(str(user_id), {}).get("favorite_models", [])
+    
+    for model in favorite_models:
+        builder.row(
+            InlineKeyboardButton(
+                text=format_model_name(model),
+                callback_data=f"model:{model}"
+            )
+        )
+    
+    # Кнопка "Назад"
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад к категориям",
+            callback_data="back_to_categories"
+        )
+    )
+    
     return builder.as_markup()
 
 async def create_category_models_keyboard(category: str) -> InlineKeyboardMarkup:
@@ -708,6 +951,12 @@ async def create_feedback_keyboard(message_id: str) -> InlineKeyboardMarkup:
 @safe_execution
 async def get_ai_response(user_id: int, message_text: str, image_data: Optional[str] = None) -> str:
     """Получает ответ от API на основе настроек пользователя."""
+    # Сначала проверяем, не запрос ли это об известной исторической личности
+    historical_match = match_query_with_historical_figure(message_text)
+    if historical_match:
+        figure_key, info = historical_match
+        return get_historical_figure_response(figure_key, info)
+    
     # Определяем тему вопроса для выбора оптимальной модели
     topic = detect_question_topic(message_text)
     
@@ -784,6 +1033,7 @@ async def get_ai_response(user_id: int, message_text: str, image_data: Optional[
                 
                 # Записываем статистику производительности модели
                 record_model_performance(model, True, response_time, topic)
+                record_request_stat(user_id, True, model, topic)
 
                 return ai_response
 
@@ -792,6 +1042,7 @@ async def get_ai_response(user_id: int, message_text: str, image_data: Optional[
             
             # Записываем неудачную попытку
             record_model_performance(model, False, time.time() - start_time, topic)
+            record_request_stat(user_id, False, model, topic)
 
             # Если это последняя попытка или автоматическое переключение отключено
             if attempt == CONFIG["RETRY_ATTEMPTS"] - 1 or not CONFIG["FALLBACK_MODE"]:
@@ -835,6 +1086,7 @@ async def get_ai_response(user_id: int, message_text: str, image_data: Optional[
         except requests.exceptions.Timeout:
             logger.error(f"Таймаут при запросе к API для модели {model}")
             record_model_performance(model, False, CONFIG["REQUEST_TIMEOUT"], topic)
+            record_request_stat(user_id, False, model, topic)
             
             # Если это последняя попытка
             if attempt == CONFIG["RETRY_ATTEMPTS"] - 1:
@@ -915,6 +1167,7 @@ async def cmd_start(message: Message):
     keyboard = ReplyKeyboardBuilder()
     keyboard.add(KeyboardButton(text="🔄 Новый диалог"))
     keyboard.add(KeyboardButton(text="⚙️ Настройки"))
+    keyboard.add(KeyboardButton(text="🤖 Выбрать модель"))
     keyboard.adjust(2)
 
     welcome_text = (
@@ -943,6 +1196,7 @@ async def cmd_start(message: Message):
             "requests_left": 10,
             "last_reset": str(date.today()),
             "preferred_topics": [],
+            "favorite_models": [],
             "last_active": str(date.today())
         }
         save_user_settings()
@@ -992,6 +1246,7 @@ async def cmd_settings(message: Message):
             "requests_left": 10,
             "last_reset": str(date.today()),
             "preferred_topics": [],
+            "favorite_models": [],
             "last_active": str(date.today())
         }
         save_user_settings()
@@ -1202,6 +1457,94 @@ async def callback_back_to_categories(callback: CallbackQuery):
     )
     await callback.answer()
 
+@router.callback_query(lambda c: c.data == "favorite_models")
+@safe_execution
+async def callback_favorite_models(callback: CallbackQuery):
+    """Обработчик кнопки "Избранные модели"."""
+    user_id = callback.from_user.id
+    
+    await callback.message.edit_text(
+        "⭐ Выберите одну из ваших избранных моделей:",
+        reply_markup=await create_favorite_models_keyboard(user_id)
+    )
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "enter_model_manually")
+@safe_execution
+async def callback_enter_model_manually(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки ввода названия модели вручную."""
+    await state.set_state(UserStates.waiting_for_direct_model)
+    
+    await callback.message.edit_text(
+        "🔍 Введите название модели в формате `provider/model-name`.\n\n"
+        "Например: `meta-llama/Llama-3.3-70B-Instruct` или `Qwen/QwQ-32B`\n\n"
+        "Для отмены напишите 'отмена'."
+    )
+    await callback.answer()
+
+@router.message(StateFilter(UserStates.waiting_for_direct_model))
+@safe_execution
+async def process_direct_model(message: Message, state: FSMContext):
+    """Обрабатывает ввод названия модели вручную."""
+    model_name = message.text.strip()
+    
+    # Проверка на отмену
+    if model_name.lower() in ['отмена', 'cancel', 'отмен', 'стоп', 'stop']:
+        await state.clear()
+        await message.answer("❌ Выбор модели отменен. Оставлена текущая модель.")
+        return
+    
+    # Проверяем формат модели
+    if '/' not in model_name:
+        await message.answer(
+            "❌ Неверный формат названия модели. Необходимо указать в формате `provider/model-name`.\n"
+            "Пример: meta-llama/Llama-3.3-70B-Instruct\n\n"
+            "Попробуйте еще раз или напишите 'отмена' для отмены."
+        )
+        return
+    
+    # Сохраняем выбранную модель
+    user_id = message.from_user.id
+    
+    if str(user_id) not in user_settings:
+        user_settings[str(user_id)] = {
+            "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
+            "temperature": CONFIG["TEMPERATURE"],
+            "requests_left": 10,
+            "last_reset": str(date.today()),
+            "preferred_topics": [],
+            "favorite_models": [],
+            "last_active": str(date.today())
+        }
+    
+    # Сохраняем предыдущую модель
+    previous_model = user_settings[str(user_id)].get("model", ALL_MODELS[0])
+    
+    # Устанавливаем новую модель
+    user_settings[str(user_id)]["model"] = model_name
+    
+    # Добавляем модель в избранное, если её там еще нет
+    favorite_models = user_settings[str(user_id)].get("favorite_models", [])
+    if model_name not in favorite_models:
+        favorite_models.append(model_name)
+        # Ограничиваем количество избранных моделей
+        if len(favorite_models) > 5:
+            favorite_models.pop(0)
+        user_settings[str(user_id)]["favorite_models"] = favorite_models
+    
+    save_user_settings()
+    
+    # Возвращаемся к нормальному состоянию
+    await state.clear()
+    
+    await message.answer(
+        f"✅ Модель успешно изменена на: **{model_name}**\n\n"
+        f"⚠️ Обратите внимание, что если указанная модель не существует или недоступна, "
+        f"бот автоматически вернется к одной из доступных моделей при следующем запросе.\n\n"
+        f"Модель также добавлена в ваш список избранных для быстрого доступа в будущем.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
 @router.callback_query(lambda c: c.data.startswith("model:"))
 @safe_execution
 async def callback_select_model(callback: CallbackQuery, state: FSMContext):
@@ -1217,10 +1560,21 @@ async def callback_select_model(callback: CallbackQuery, state: FSMContext):
             "requests_left": 10,
             "last_reset": str(date.today()),
             "preferred_topics": [],
+            "favorite_models": [],
             "last_active": str(date.today())
         }
 
     user_settings[str(user_id)]["model"] = model
+    
+    # Добавляем модель в избранное, если её там еще нет
+    favorite_models = user_settings[str(user_id)].get("favorite_models", [])
+    if model not in favorite_models:
+        favorite_models.append(model)
+        # Ограничиваем количество избранных моделей
+        if len(favorite_models) > 5:
+            favorite_models.pop(0)
+        user_settings[str(user_id)]["favorite_models"] = favorite_models
+    
     save_user_settings()
 
     # Возвращаемся к нормальному состоянию
@@ -1228,6 +1582,7 @@ async def callback_select_model(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         f"✅ Модель успешно изменена на: **{format_model_name(model)}**\n\n"
+        "Модель также добавлена в ваши избранные для быстрого доступа в будущем.\n\n"
         "Теперь вы можете задать мне любой вопрос!",
         parse_mode=ParseMode.MARKDOWN
     )
@@ -1248,6 +1603,7 @@ async def callback_select_temperature(callback: CallbackQuery, state: FSMContext
             "requests_left": 10,
             "last_reset": str(date.today()),
             "preferred_topics": [],
+            "favorite_models": [],
             "last_active": str(date.today())
         }
 
@@ -1321,7 +1677,15 @@ async def callback_rephrase(callback: CallbackQuery):
     )
     
     # Отправляем новый ответ с кнопками обратной связи
-    await split_and_send_message(callback.message, new_answer)
+    sent_message = await split_and_send_message(callback.message, new_answer)
+    
+    # Добавляем кнопки обратной связи к последнему сообщению
+    if sent_message:
+        feedback_id = str(uuid.uuid4())
+        try:
+            await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+        except Exception as e:
+            logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
     
     # Удаляем кнопки у старого сообщения
     try:
@@ -1352,7 +1716,15 @@ async def callback_elaborate(callback: CallbackQuery):
     )
     
     # Отправляем новый ответ с кнопками обратной связи
-    await split_and_send_message(callback.message, new_answer)
+    sent_message = await split_and_send_message(callback.message, new_answer)
+    
+    # Добавляем кнопки обратной связи к последнему сообщению
+    if sent_message:
+        feedback_id = str(uuid.uuid4())
+        try:
+            await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+        except Exception as e:
+            logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
     
     # Удаляем кнопки у старого сообщения
     try:
@@ -1382,6 +1754,7 @@ async def process_custom_prompt(message: Message, state: FSMContext):
             "requests_left": 10,
             "last_reset": str(date.today()),
             "preferred_topics": [],
+            "favorite_models": [],
             "last_active": str(date.today())
         }
 
@@ -1445,6 +1818,12 @@ async def handle_settings_button(message: Message):
     """Обработчик кнопки "Настройки" на клавиатуре."""
     await cmd_settings(message)
 
+@router.message(F.text == "🤖 Выбрать модель")
+@safe_execution
+async def handle_models_button(message: Message, state: FSMContext):
+    """Обработчик кнопки "Выбрать модель" на клавиатуре."""
+    await cmd_models(message, state)
+
 @router.message(F.photo)
 @safe_execution
 async def handle_photo(message: Message):
@@ -1497,6 +1876,7 @@ async def handle_photo(message: Message):
                     "requests_left": 10,
                     "last_reset": str(date.today()),
                     "preferred_topics": [],
+                    "favorite_models": [],
                     "last_active": str(date.today())
                 }
 
@@ -1544,12 +1924,15 @@ async def handle_photo(message: Message):
         save_user_settings()
 
         # Отправляем ответ
+        ai_response = clean_markdown(ai_response)
         sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
         
         # Добавляем кнопки обратной связи
-        import uuid
         feedback_id = str(uuid.uuid4())
-        await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+        try:
+            await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+        except Exception as e:
+            logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
 
         await message.answer(
             f"🔄 Вернулся к предыдущей модели: **{format_model_name(previous_model)}**",
@@ -1557,12 +1940,15 @@ async def handle_photo(message: Message):
         )
     else:
         # Отправляем ответ
+        ai_response = clean_markdown(ai_response)
         sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
         
         # Добавляем кнопки обратной связи
-        import uuid
         feedback_id = str(uuid.uuid4())
-        await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+        try:
+            await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+        except Exception as e:
+            logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
 
 @router.message()
 @safe_execution
@@ -1597,6 +1983,7 @@ async def handle_message(message: Message, state: FSMContext):
                 "requests_left": 10,
                 "last_reset": today,
                 "preferred_topics": [],
+                "favorite_models": [],
                 "last_active": today
             }
             save_user_settings()
@@ -1628,15 +2015,52 @@ async def handle_message(message: Message, state: FSMContext):
     logger.info(f"Получен ответ за {response_time:.2f} секунд")
 
     # Отправляем ответ с разбивкой на части при необходимости
-    sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
-    
-    # Добавляем кнопки обратной связи
-    import uuid
-    feedback_id = str(uuid.uuid4())
     try:
-        await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
-    except Exception as e:
-        logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
+        # Очищаем Markdown перед отправкой
+        ai_response = clean_markdown(ai_response)
+        
+        # Отправляем сообщение
+        sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
+        
+        # Добавляем кнопки обратной связи
+        feedback_id = str(uuid.uuid4())
+        try:
+            await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+        except Exception as e:
+            logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
+    
+    except TelegramAPIError as e:
+        logger.error(f"Ошибка при отправке ответа: {e}")
+        
+        # Пробуем отправить без форматирования
+        try:
+            sent_message = await message.answer(ai_response, parse_mode=None)
+            
+            # Добавляем кнопки обратной связи
+            feedback_id = str(uuid.uuid4())
+            try:
+                await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+            except Exception as inner_e:
+                logger.warning(f"Не удалось добавить кнопки обратной связи: {inner_e}")
+        
+        except Exception as e2:
+            logger.error(f"Не удалось отправить сообщение даже без форматирования: {e2}")
+            
+            # В крайнем случае, разбиваем на части и отправляем
+            try:
+                last_message = await split_and_send_message(message, ai_response, parse_mode=None)
+                
+                # Добавляем кнопки обратной связи к последнему сообщению
+                if last_message:
+                    feedback_id = str(uuid.uuid4())
+                    try:
+                        await last_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+                    except Exception as e3:
+                        logger.warning(f"Не удалось добавить кнопки обратной связи: {e3}")
+            
+            except Exception as e3:
+                logger.error(f"Все попытки отправить сообщение провалились: {e3}")
+                await message.answer("❌ Произошла ошибка при отправке ответа. Пожалуйста, попробуйте еще раз.")
 
 # Задача для периодической очистки устаревших данных
 async def cleanup_old_data():
@@ -1689,25 +2113,106 @@ async def cleanup_old_data():
         # Запускаем очистку раз в день
         await asyncio.sleep(86400)  # 24 часа
 
+# Определяем веб-приложение для API
+app = web.Application()
+
+# Обработчик для webhook
+async def handle_webhook(request):
+    """Обрабатывает вебхук от Telegram."""
+    if request.match_info.get('token') != CONFIG["TOKEN"]:
+        return web.Response(status=403)
+    
+    request_body_bin = await request.read()
+    request_body = request_body_bin.decode('utf-8')
+    
+    try:
+        update = json.loads(request_body)
+        update_id = update['update_id']
+        
+        # Обработка обновления
+        await dp.feed_update(bot=bot, update=update)
+        
+        return web.Response(status=200)
+    except Exception as e:
+        logger.error(f"Ошибка обработки вебхука: {e}")
+        return web.Response(status=500)
+
+# Добавляем простой обработчик для домашней страницы
+async def handle_home(request):
+    text = "Telegram Bot Server is running."
+    return web.Response(text=text)
+
+# Обработчик для проверки здоровья сервиса
+async def handle_health(request):
+    """Обработчик для проверки статуса сервиса."""
+    response = {
+        "status": "online",
+        "version": "1.0.0",
+        "uptime": time.time() - start_time,
+        "timestamp": time.time()
+    }
+    return web.json_response(response)
+
+# Настраиваем маршруты
+app.router.add_get('/', handle_home)
+app.router.add_get('/health', handle_health)
+app.router.add_post('/webhook/{token}', handle_webhook)
+
 # Функция инициализации и запуска бота
 async def main():
     """Инициализация и запуск бота."""
+    global start_time
+    start_time = time.time()
+    
     # Загружаем настройки и данные
     load_user_settings()
     load_user_contexts()
     load_model_performance()
 
-    # Очищаем веб-хуки и запускаем бота
-    await bot.delete_webhook(drop_pending_updates=True)
+    if CONFIG["USE_WEBHOOK"]:
+        # Настраиваем вебхук
+        webhook_url = f"{APP_URL}/webhook/{CONFIG['TOKEN']}"
+        await bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set to {webhook_url}")
+        
+        # Запускаем задачу очистки устаревших данных
+        asyncio.create_task(cleanup_old_data())
+        
+        # Выводим информацию о запуске
+        logger.info(f"Бот запущен в режиме webhook! Используется {len(ALL_MODELS)} моделей.")
+        
+        # Запускаем веб-сервер
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
+        await site.start()
+        
+        logger.info(f"Веб-сервер запущен на порту {PORT}")
+        
+        # Ждем вечно
+        while True:
+            await asyncio.sleep(3600)
+    else:
+        # Традиционный подход с long polling
+        # Очищаем веб-хуки и запускаем бота
+        await bot.delete_webhook(drop_pending_updates=True)
 
-    # Запускаем задачу очистки устаревших данных
-    asyncio.create_task(cleanup_old_data())
+        # Запускаем задачу очистки устаревших данных
+        asyncio.create_task(cleanup_old_data())
 
-    # Выводим информацию о запуске
-    logger.info(f"Бот запущен! Используется {len(ALL_MODELS)} моделей.")
+        # Выводим информацию о запуске
+        logger.info(f"Бот запущен в режиме polling! Используется {len(ALL_MODELS)} моделей.")
 
-    # Запускаем бота
-    await dp.start_polling(bot)
+        # Запускаем сервер для Render
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
+        await site.start()
+        
+        logger.info(f"Веб-сервер запущен на порту {PORT}")
+
+        # Запускаем бота
+        await dp.start_polling(bot)
 
 if __name__ == "__main__":
     # Запускаем бота в асинхронном режиме
