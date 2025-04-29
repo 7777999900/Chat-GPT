@@ -8,11 +8,20 @@ import requests
 import traceback
 import threading
 import uuid
+import shutil
+import glob
+import hashlib
+import random
+import string
+import io
+import base64
+import zipfile
+import sys
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Union, Any, Tuple, Set, Callable
 from functools import wraps
 from aiohttp import web
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote, unquote
 
 from aiogram import Bot, Dispatcher, Router, F, html
 from aiogram.filters import Command, CommandStart, StateFilter
@@ -29,6 +38,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.utils.chat_action import ChatActionMiddleware
 from aiogram.exceptions import TelegramAPIError
 
+# Версия бота
+BOT_VERSION = "1.2.0"
+
 # Получаем порт из переменной окружения или используем 8080 по умолчанию
 PORT = int(os.environ.get("PORT", 8080))
 APP_URL = os.environ.get("APP_URL", "")
@@ -36,12 +48,26 @@ APP_URL = os.environ.get("APP_URL", "")
 # Конфигурация путей для хранения данных на Render
 # На бесплатном плане можно писать только в /tmp (временное хранилище) 
 # или в директорию проекта /opt/render/project/src/
-DATA_DIR = "/tmp" if os.path.exists("/opt/render") else "data"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = "/tmp" if os.path.exists("/opt/render") else os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Настройка логирования с учетом ограничений Render
 LOG_DIR = os.path.join(DATA_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
+
+# Создаем дополнительные директории для разных типов данных
+CACHE_DIR = os.path.join(DATA_DIR, "cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+BACKUP_DIR = os.path.join(DATA_DIR, "backups")
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
+USER_MEDIA_DIR = os.path.join(DATA_DIR, "user_media")
+os.makedirs(USER_MEDIA_DIR, exist_ok=True)
+
+STATS_DIR = os.path.join(DATA_DIR, "stats")
+os.makedirs(STATS_DIR, exist_ok=True)
 
 # Конфигурация и константы
 CONFIG = {
@@ -54,7 +80,7 @@ CONFIG = {
     "TEMPERATURE": 0.3,  # Уровень креативности (ниже = более предсказуемо)
     "MAX_TOKENS": 4000,  # Максимальная длина ответа
     "RETRY_ATTEMPTS": 5,  # Количество попыток при ошибке
-    "ADMIN_IDS": [12345678],  # ID администраторов
+    "ADMIN_IDS": [5456372164],  # ID администраторов
     "ALLOWED_FORMATS": ["jpg", "jpeg", "png", "webp"],  # Поддерживаемые форматы изображений
     "MAX_FILE_SIZE": 10 * 1024 * 1024,  # Максимальный размер файла (10 МБ)
     "CACHE_TIMEOUT": 3600,  # Время жизни кэша в секундах (1 час)
@@ -64,6 +90,19 @@ CONFIG = {
     "REQUEST_TIMEOUT": 60,  # Таймаут запросов к API
     "USE_WEBHOOK": True if APP_URL else False,  # Использовать webhook вместо polling если указан APP_URL
     "MAX_INLINE_KEYBOARDS": 5,  # Максимальное количество кнопок в ряду для inline клавиатуры
+    "STATS_API_KEY": os.environ.get("STATS_API_KEY", "statskey"),  # Ключ для доступа к API статистики
+    "MAX_DAILY_REQUESTS": 25,  # Максимальное количество запросов в день на бесплатном плане
+    "PREMIUM_USER_IDS": [],  # ID премиум пользователей с неограниченным доступом
+    "LOG_ROTATION_SIZE": 10 * 1024 * 1024,  # Размер файла лога перед ротацией (10 МБ)
+    "LOG_BACKUPS_COUNT": 5,  # Количество файлов ротации для хранения
+    "HEALTH_CHECK_INTERVAL": 3600,  # Интервал проверки работоспособности в секундах
+    "USER_TIMEOUT_SECONDS": 120,  # Таймаут ожидания ответа пользователя в секундах
+    "RATE_LIMIT_WINDOW": 60,  # Окно для ограничения частоты запросов (в секундах)
+    "RATE_LIMIT_MAX_REQUESTS": 10,  # Максимальное количество запросов за окно времени
+    "BACKUP_INTERVAL": 3600,  # Интервал резервного копирования в секундах
+    "MAINTENANCE_MODE": False,  # Режим технического обслуживания
+    "WEBHOOK_SECRET_TOKEN": os.environ.get("WEBHOOK_SECRET", ""),  # Секретный токен для защиты вебхука
+    "DEBUG_MODE": os.environ.get("DEBUG_MODE", "0") == "1",  # Режим отладки
 }
 
 # Сведения об исторических личностях
@@ -103,6 +142,34 @@ HISTORICAL_FIGURES = {
         "description": "Физик-теоретик, один из основателей современной теоретической физики, лауреат Нобелевской премии по физике 1921 года, общественный деятель-гуманист.",
         "discoveries": ["Теория относительности", "Фотоэлектрический эффект", "Броуновское движение", "E=mc²"],
     },
+    "тесла": {
+        "full_name": "Никола Тесла",
+        "years": "1856-1943",
+        "category": "Изобретатель, инженер, физик",
+        "description": "Сербский и американский изобретатель и физик, создатель многих устройств на переменном токе, сделавший революционный вклад в развитие электротехники и радиотехники.",
+        "discoveries": ["Электродвигатель на переменном токе", "Трансформатор Теслы", "Беспроводная передача энергии", "Радиоуправление"]
+    },
+    "ньютон": {
+        "full_name": "Исаак Ньютон",
+        "years": "1643-1727",
+        "category": "Физик, математик, астроном",
+        "description": "Английский физик, математик, механик и астроном, один из создателей классической физики и дифференциального и интегрального исчислений.",
+        "discoveries": ["Закон всемирного тяготения", "Законы движения", "Корпускулярная теория света", "Исчисление бесконечно малых"]
+    },
+    "сократ": {
+        "full_name": "Сократ",
+        "years": "470-399 до н.э.",
+        "category": "Философ",
+        "description": "Древнегреческий философ, учение которого знаменует поворот в философии — от рассмотрения природы и мира к рассмотрению человека.",
+        "works": ["Диалоги (в записях Платона)", "Апология Сократа", "Сократический метод"]
+    },
+    "платон": {
+        "full_name": "Платон",
+        "years": "428/427-348/347 до н.э.",
+        "category": "Философ",
+        "description": "Древнегреческий философ, ученик Сократа, основатель Академии, одной из первых философских школ. Его идеалистическая философия оказала огромное влияние на последующее развитие философской мысли.",
+        "works": ["Государство", "Пир", "Федон", "Теэтет", "Софист"]
+    }
 }
 
 # Категории моделей для более удобного представления
@@ -153,6 +220,9 @@ SPECIALIZED_MODELS = {
     "reading": ["jinaai/ReaderLM-v2"],
     "history": ["meta-llama/Llama-3.3-70B-Instruct", "mistralai/Mistral-Large-Instruct-2411"],
     "literature": ["meta-llama/Llama-3.3-70B-Instruct", "mistralai/Mistral-Large-Instruct-2411"],
+    "science": ["meta-llama/Llama-3.3-70B-Instruct", "google/gemma-3-27b-it"],
+    "medicine": ["databricks/dbrx-instruct", "meta-llama/Llama-3.3-70B-Instruct"],
+    "philosophy": ["mistralai/Mistral-Large-Instruct-2411", "netease-youdao/Confucius-01-14B"],
 }
 
 # Список всех моделей из категорий
@@ -192,21 +262,266 @@ TOPIC_PATTERNS = {
     "math": r"(?i)(математик|уравнени|вычисли|решить|задач|дробь|интеграл|производн|алгебр|геометри)",
     "history": r"(?i)(истори|[\d]{3,4} год|древн|средневеков|войн|революци|импери|государств|царь|король)",
     "literature": r"(?i)(литератур|писатель|поэт|стих|роман|повесть|рассказ|книг|поэм)",
+    "science": r"(?i)(наук|физик|хими|биолог|астроном|геолог|географ|теор|эксперимент)",
+    "medicine": r"(?i)(медицин|здоровь|болезн|лечени|диагноз|врач|пациент|симптом|терапи|хирург)",
+    "philosophy": r"(?i)(философ|мысл|этик|мораль|сознани|бытие|познани|онтолог|гносеолог)",
 }
 
 # Шаблоны для распознавания запросов об исторических личностях
 HISTORICAL_PATTERN = r"(?i)(?:кто (?:так(ой|ая|ое|ие)|был|явля(?:ет|л)ся|известен как)|расскаж(?:и|ите) (?:о|про|мне о|мне про)|что (?:ты |вы )?знаешь (?:о|про)|информаци[яю] (?:о|про))\s+([А-Яа-яЁё]+)"
 
-# Настройка логирования с защитой от ошибок файловой системы
+# Словарь для хранения статистики запросов по пользователям и ограничения частоты запросов
+rate_limits = {}
+
+# Класс для сбора и хранения метрик работы бота
+class BotMetrics:
+    """Класс для сбора и хранения метрик работы бота."""
+    
+    def __init__(self):
+        self.start_time = time.time()
+        self.requests_total = 0
+        self.requests_success = 0
+        self.requests_failed = 0
+        self.response_times = []
+        self.errors = {}
+        self.active_users = set()
+        self.models_usage = {}
+        self.topics_usage = {}
+        self.daily_stats = {}
+        self.lock = asyncio.Lock()
+        
+        # Загружаем сохраненные метрики, если они есть
+        self._load_metrics()
+        
+        # Запускаем периодическое сохранение метрик
+        asyncio.create_task(self._periodic_save())
+    
+    async def record_request(self, user_id: int, success: bool, response_time: float, model: str = None, 
+                           topic: str = None, error: str = None):
+        """Записывает информацию о запросе."""
+        async with self.lock:
+            self.requests_total += 1
+            if success:
+                self.requests_success += 1
+                self.response_times.append(response_time)
+                # Держим только последние 1000 времен ответа для экономии памяти
+                if len(self.response_times) > 1000:
+                    self.response_times = self.response_times[-1000:]
+            else:
+                self.requests_failed += 1
+                if error:
+                    self.errors[error] = self.errors.get(error, 0) + 1
+            
+            self.active_users.add(user_id)
+            
+            if model:
+                self.models_usage[model] = self.models_usage.get(model, 0) + 1
+                
+            if topic:
+                self.topics_usage[topic] = self.topics_usage.get(topic, 0) + 1
+                
+            # Обновляем дневную статистику
+            today = date.today().isoformat()
+            if today not in self.daily_stats:
+                self.daily_stats[today] = {
+                    "requests": 0,
+                    "success": 0,
+                    "failed": 0,
+                    "unique_users": set(),
+                    "models": {},
+                    "topics": {}
+                }
+            
+            daily = self.daily_stats[today]
+            daily["requests"] += 1
+            
+            if success:
+                daily["success"] += 1
+            else:
+                daily["failed"] += 1
+                
+            daily["unique_users"].add(user_id)
+            
+            if model:
+                daily["models"][model] = daily["models"].get(model, 0) + 1
+                
+            if topic:
+                daily["topics"][topic] = daily["topics"].get(topic, 0) + 1
+    
+    def get_stats(self) -> dict:
+        """Возвращает текущую статистику бота."""
+        uptime = time.time() - self.start_time
+        avg_response_time = sum(self.response_times) / len(self.response_times) if self.response_times else 0
+        
+        # Для JSON-сериализации преобразуем множества в списки
+        daily_stats_json = {}
+        for day, stats in self.daily_stats.items():
+            daily_stats_json[day] = {
+                "requests": stats["requests"],
+                "success": stats["success"],
+                "failed": stats["failed"],
+                "unique_users": len(stats["unique_users"]),
+                "models": stats["models"],
+                "topics": stats["topics"]
+            }
+        
+        return {
+            "uptime_seconds": uptime,
+            "uptime_formatted": self._format_uptime(uptime),
+            "requests": {
+                "total": self.requests_total,
+                "success": self.requests_success,
+                "failed": self.requests_failed,
+                "success_rate": (self.requests_success / self.requests_total * 100) if self.requests_total else 0
+            },
+            "response_time": {
+                "average_ms": avg_response_time * 1000,
+                "min_ms": min(self.response_times) * 1000 if self.response_times else 0,
+                "max_ms": max(self.response_times) * 1000 if self.response_times else 0
+            },
+            "users": {
+                "active_count": len(self.active_users)
+            },
+            "models": {
+                k: v for k, v in sorted(self.models_usage.items(), key=lambda x: x[1], reverse=True)
+            },
+            "topics": {
+                k: v for k, v in sorted(self.topics_usage.items(), key=lambda x: x[1], reverse=True)
+            },
+            "top_errors": {
+                k: v for k, v in sorted(self.errors.items(), key=lambda x: x[1], reverse=True)[:5]
+            },
+            "daily_stats": daily_stats_json,
+            "timestamp": datetime.now().isoformat(),
+            "version": BOT_VERSION
+        }
+    
+    def _load_metrics(self):
+        """Загружает сохраненные метрики."""
+        try:
+            metrics_file = os.path.join(STATS_DIR, "latest_metrics.json")
+            if os.path.exists(metrics_file):
+                with open(metrics_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    
+                    self.requests_total = data.get("requests", {}).get("total", 0)
+                    self.requests_success = data.get("requests", {}).get("success", 0)
+                    self.requests_failed = data.get("requests", {}).get("failed", 0)
+                    self.errors = data.get("top_errors", {})
+                    self.models_usage = data.get("models", {})
+                    self.topics_usage = data.get("topics", {})
+                    
+                    # Загружаем дневную статистику
+                    daily_stats = data.get("daily_stats", {})
+                    for day, stats in daily_stats.items():
+                        self.daily_stats[day] = {
+                            "requests": stats.get("requests", 0),
+                            "success": stats.get("success", 0),
+                            "failed": stats.get("failed", 0),
+                            "unique_users": set(),
+                            "models": stats.get("models", {}),
+                            "topics": stats.get("topics", {})
+                        }
+                        
+                        # Уникальных пользователей загрузить не можем (они были преобразованы в count)
+                        
+                    logger.info("Метрики успешно загружены из сохраненного файла")
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке метрик: {e}")
+    
+    async def _periodic_save(self):
+        """Периодически сохраняет метрики."""
+        while True:
+            await asyncio.sleep(300)  # Сохраняем каждые 5 минут
+            await self._save_metrics()
+    
+    async def _save_metrics(self):
+        """Сохраняет текущие метрики."""
+        try:
+            stats = self.get_stats()
+            # Сохраняем как текущие метрики
+            metrics_file = os.path.join(STATS_DIR, "latest_metrics.json")
+            with open(metrics_file, 'w', encoding='utf-8') as f:
+                json.dump(stats, f, ensure_ascii=False, indent=2)
+                
+            # Также сохраняем с временной меткой каждый час
+            current_hour = datetime.now().strftime('%Y%m%d_%H')
+            if not os.path.exists(os.path.join(STATS_DIR, f"metrics_{current_hour}.json")):
+                hourly_file = os.path.join(STATS_DIR, f"metrics_{current_hour}.json")
+                with open(hourly_file, 'w', encoding='utf-8') as f:
+                    json.dump(stats, f, ensure_ascii=False, indent=2)
+                
+                # Очищаем старые файлы метрик (оставляем только 48 последних = 2 дня)
+                self._cleanup_old_metrics(48)
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении метрик: {e}")
+    
+    def _cleanup_old_metrics(self, keep_count: int):
+        """Очищает старые файлы метрик, оставляя только указанное количество."""
+        try:
+            metrics_files = glob.glob(os.path.join(STATS_DIR, "metrics_*.json"))
+            metrics_files.sort(key=os.path.getmtime)
+            
+            if len(metrics_files) > keep_count:
+                for old_file in metrics_files[:-keep_count]:
+                    try:
+                        os.remove(old_file)
+                        logger.debug(f"Удален старый файл метрик: {old_file}")
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить старый файл метрик {old_file}: {e}")
+        except Exception as e:
+            logger.warning(f"Ошибка при очистке старых файлов метрик: {e}")
+    
+    def _format_uptime(self, seconds: float) -> str:
+        """Форматирует время работы в человекочитаемый вид."""
+        days, remainder = divmod(int(seconds), 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        parts = []
+        if days > 0:
+            parts.append(f"{days} дн.")
+        if hours > 0 or days > 0:
+            parts.append(f"{hours} ч.")
+        if minutes > 0 or hours > 0 or days > 0:
+            parts.append(f"{minutes} мин.")
+        parts.append(f"{seconds} сек.")
+        
+        return " ".join(parts)
+
+# Создаем экземпляр метрик
+bot_metrics = BotMetrics()
+
+# Настройка логирования с защитой от ошибок файловой системы и ротацией
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.INFO if not CONFIG["DEBUG_MODE"] else logging.DEBUG)
 
 try:
-    # Создаем файловый обработчик логов
-    log_file_path = os.path.join(LOG_DIR, f"bot_{date.today().strftime('%Y-%m-%d')}.log")
-    file_handler = logging.FileHandler(log_file_path)
+    # Создаем ротируемый файловый обработчик логов
+    from logging.handlers import RotatingFileHandler
+    
+    log_file_path = os.path.join(LOG_DIR, "bot.log")
+    file_handler = RotatingFileHandler(
+        log_file_path,
+        maxBytes=CONFIG["LOG_ROTATION_SIZE"],
+        backupCount=CONFIG["LOG_BACKUPS_COUNT"],
+        encoding='utf-8'
+    )
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(file_handler)
+    
+    # Отдельный файл для ошибок
+    error_log_path = os.path.join(LOG_DIR, "errors.log")
+    error_handler = RotatingFileHandler(
+        error_log_path,
+        maxBytes=5*1024*1024,  # 5 МБ максимальный размер
+        backupCount=3,  # Хранить до 3 файлов ротации
+        encoding='utf-8'
+    )
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s\n%(pathname)s:%(lineno)d\n'))
+    logger.addHandler(error_handler)
+    
 except Exception as e:
     print(f"Не удалось настроить файловый логгер: {e}")
     # Продолжаем работу без файлового логгера
@@ -232,6 +547,10 @@ class UserStates(StatesGroup):
     waiting_for_temperature = State()  # Настройка temperature
     waiting_for_feedback = State()  # Ожидание отзыва о качестве ответа
     waiting_for_direct_model = State()  # Ожидание ввода конкретной модели
+    waiting_for_image_caption = State()  # Ожидание подписи к изображению
+    waiting_for_admin_broadcast = State()  # Ожидание сообщения для рассылки от админа
+    waiting_for_premium_code = State()  # Ожидание ввода премиум-кода
+    waiting_for_file_processing = State()  # Ожидание выбора типа обработки файла
 
 # Кэш и переменные для моделей
 model_cache = {}  # Кэш ответов моделей
@@ -240,22 +559,142 @@ user_contexts = {}  # История диалогов с пользовател�
 user_feedback = {}  # Отзывы пользователей о качестве ответов
 model_performance = {}  # Статистика производительности моделей (для адаптивного выбора)
 request_stats = {}  # Статистика запросов
+user_files = {}  # Временное хранилище файлов пользователей
+premium_codes = set()  # Набор действительных премиум-кодов
+user_states = {}  # Хранение информации о состоянии пользователей между командами
+
+# Создаем словарь для хранения пользовательских сессий и состояний обработки
+user_sessions = {}  
+
+# Функции-декораторы
+def with_retry(max_retries: int = 3, delay: float = 1.0, backoff: float = 2.0,
+               exceptions: tuple = (Exception,)):
+    """Декоратор для повторного выполнения функции при исключениях.
+    
+    Args:
+        max_retries: Максимальное количество повторных попыток
+        delay: Начальная задержка между попытками (секунды)
+        backoff: Множитель для увеличения задержки с каждой попыткой
+        exceptions: Кортеж исключений, при которых выполнять повторные попытки
+        
+    Returns:
+        Декоратор функции
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            mtries, mdelay = max_retries, delay
+            
+            while mtries > 0:
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    mtries -= 1
+                    if mtries <= 0:
+                        logger.error(f"Функция {func.__name__} не выполнена после {max_retries} попыток")
+                        raise
+                    
+                    logger.warning(f"Повторная попытка {max_retries - mtries}/{max_retries} для {func.__name__}: {str(e)}")
+                    
+                    # Увеличиваем задержку с каждой попыткой (экспоненциальный backoff)
+                    await asyncio.sleep(mdelay)
+                    mdelay *= backoff
+            
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+def admin_only(func):
+    """Декоратор для функций, доступных только администраторам."""
+    @wraps(func)
+    async def wrapper(message: Message, *args, **kwargs):
+        if message.from_user.id not in CONFIG["ADMIN_IDS"]:
+            await message.answer("⛔ Эта команда доступна только администраторам.")
+            return
+        return await func(message, *args, **kwargs)
+    return wrapper
+
+def rate_limit(func):
+    """Декоратор для ограничения частоты запросов от пользователя."""
+    @wraps(func)
+    async def wrapper(message: Message, *args, **kwargs):
+        user_id = message.from_user.id
+        username = message.from_user.username
+        
+        # Проверяем, не является ли пользователь администратором или премиум-пользователем
+        if user_id in CONFIG["ADMIN_IDS"] or username == "qqq5599" or user_id in CONFIG["PREMIUM_USER_IDS"]:
+            return await func(message, *args, **kwargs)
+        
+        current_time = time.time()
+        window_size = CONFIG["RATE_LIMIT_WINDOW"]
+        max_requests = CONFIG["RATE_LIMIT_MAX_REQUESTS"]
+        
+        if user_id not in rate_limits:
+            rate_limits[user_id] = {"requests": [], "warned": False}
+        
+        # Очищаем старые запросы
+        rate_limits[user_id]["requests"] = [req_time for req_time in rate_limits[user_id]["requests"] 
+                                         if current_time - req_time < window_size]
+        
+        # Проверяем, не превышен ли лимит
+        if len(rate_limits[user_id]["requests"]) >= max_requests:
+            if not rate_limits[user_id]["warned"]:
+                await message.answer(
+                    f"⚠️ Вы отправляете слишком много запросов. Пожалуйста, подождите {window_size} секунд перед "
+                    f"следующим запросом. Лимит: {max_requests} запросов за {window_size} секунд."
+                )
+                rate_limits[user_id]["warned"] = True
+            return
+        
+        # Добавляем текущий запрос
+        rate_limits[user_id]["requests"].append(current_time)
+        rate_limits[user_id]["warned"] = False
+        
+        return await func(message, *args, **kwargs)
+    return wrapper
 
 # Декоратор для сохранения контекста при исключениях
 def safe_execution(f):
     @wraps(f)
     async def wrapped(*args, **kwargs):
+        user_id = None
+        start_time = time.time()
+        success = False
+        error_message = None
+        model = None
+        topic = None
+        
+        # Пытаемся извлечь user_id из аргументов
+        for arg in args:
+            if isinstance(arg, Message) and arg.from_user:
+                user_id = arg.from_user.id
+                # Пытаемся определить тему, если есть текст сообщения
+                if arg.text:
+                    topic = detect_question_topic(arg.text)
+                break
+            elif isinstance(arg, CallbackQuery) and arg.from_user:
+                user_id = arg.from_user.id
+                break
+        
+        # Извлекаем модель из настроек пользователя, если возможно
+        if user_id and str(user_id) in user_settings:
+            model = user_settings[str(user_id)].get("model")
+        
         try:
-            return await f(*args, **kwargs)
+            result = await f(*args, **kwargs)
+            success = True
+            return result
         except Exception as e:
             # Получаем информацию о вызывающей функции
             error_context = {
                 'function': f.__name__,
-                'args': args,
-                'kwargs': kwargs,
+                'args': str(args),
+                'kwargs': str(kwargs),
                 'exception': str(e),
                 'traceback': traceback.format_exc()
             }
+            
+            error_message = str(e)
             
             # Логируем ошибку с полным контекстом
             logger.error(f"Ошибка в {f.__name__}: {str(e)}\n{traceback.format_exc()}")
@@ -269,6 +708,11 @@ def safe_execution(f):
                         pass
                     break
             return None
+        finally:
+            # Записываем метрики
+            if user_id:
+                execution_time = time.time() - start_time
+                await bot_metrics.record_request(user_id, success, execution_time, model, topic, error_message)
     return wrapped
 
 # Функции-помощники
@@ -338,37 +782,171 @@ def clean_markdown(text: str) -> str:
     
     return text
 
-def save_data_to_json(data: Any, filename: str) -> bool:
-    """Безопасно сохраняет данные в JSON-файл с защитой от потери данных."""
+def get_cached_response(cache_key: str, max_age: int = None) -> Optional[dict]:
+    """Получает кэшированный ответ если он существует и не истек срок действия.
+    
+    Args:
+        cache_key: Ключ кэша
+        max_age: Максимальный возраст кэша в секундах (None = использовать CONFIG["CACHE_TIMEOUT"])
+        
+    Returns:
+        Dict с ответом или None если кэш отсутствует или устарел
+    """
+    cache_file = os.path.join(CACHE_DIR, f"{hashlib.md5(cache_key.encode()).hexdigest()}.json")
+    
+    if not os.path.exists(cache_file):
+        return None
+        
+    try:
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            cached_data = json.load(f)
+            
+        # Проверяем возраст кэша
+        cache_time = cached_data.get("timestamp", 0)
+        max_age = max_age or CONFIG["CACHE_TIMEOUT"]
+        
+        if time.time() - cache_time > max_age:
+            # Кэш устарел
+            return None
+            
+        return cached_data.get("data")
+    except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
+        logger.warning(f"Ошибка при чтении кэша {cache_key}: {e}")
+        return None
+
+def set_cached_response(cache_key: str, data: Any) -> bool:
+    """Сохраняет ответ в кэш.
+    
+    Args:
+        cache_key: Ключ кэша
+        data: Данные для сохранения
+        
+    Returns:
+        True в случае успеха, False в случае ошибки
+    """
+    cache_file = os.path.join(CACHE_DIR, f"{hashlib.md5(cache_key.encode()).hexdigest()}.json")
+    
+    try:
+        cache_data = {
+            "timestamp": time.time(),
+            "data": data
+        }
+        
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении кэша {cache_key}: {e}")
+        return False
+
+def save_data_to_json(data: Any, filename: str, version: int = None) -> bool:
+    """Безопасно сохраняет данные в JSON-файл с защитой от потери данных и версионированием.
+    
+    Args:
+        data: Данные для сохранения
+        filename: Имя файла (без пути)
+        version: Версия данных для версионирования (опционально)
+        
+    Returns:
+        True в случае успеха, False в случае ошибки
+    """
     filepath = os.path.join(CONFIG["PERSISTENT_STORAGE"], filename)
     temp_filepath = f"{filepath}.tmp"
     backup_filepath = f"{filepath}.bak"
     
     try:
+        # Создаем директорию если она не существует
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # Добавляем метаданные версионирования
+        if isinstance(data, dict) and version is not None:
+            data_with_meta = {
+                "_meta": {
+                    "version": version,
+                    "timestamp": datetime.now().isoformat(),
+                    "schema_version": 1
+                },
+                "data": data
+            }
+        else:
+            data_with_meta = data
+        
         # Сначала записываем во временный файл
         with open(temp_filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(data_with_meta, f, ensure_ascii=False, indent=2)
         
         # Затем копируем текущий файл в бекап, если он существует
         if os.path.exists(filepath):
-            os.replace(filepath, backup_filepath)
+            # Сохраняем бэкап в отдельной директории с временной меткой
+            backup_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_filename = f"{os.path.basename(filepath)}.{backup_time}.bak"
+            versioned_backup = os.path.join(BACKUP_DIR, backup_filename)
+            
+            # Копируем текущий файл и в бекап директорию тоже
+            shutil.copy2(filepath, backup_filepath)
+            shutil.copy2(filepath, versioned_backup)
         
         # И наконец, перемещаем временный файл на место основного
         os.replace(temp_filepath, filepath)
+        
+        # Периодическая очистка старых версий бэкапов (оставляем только 20 последних)
+        cleanup_old_backups(filename)
+        
         return True
     except Exception as e:
-        logger.error(f"Ошибка при сохранении файла {filename}: {e}")
+        logger.error(f"Ошибка при сохранении файла {filename}: {e}\n{traceback.format_exc()}")
         return False
 
+def cleanup_old_backups(filename_pattern: str, max_backups: int = 20):
+    """Очищает старые резервные копии, оставляя только указанное количество последних.
+    
+    Args:
+        filename_pattern: Паттерн имени файла для поиска в бэкапах
+        max_backups: Максимальное количество бэкапов для сохранения
+    """
+    try:
+        # Находим все файлы бэкапов с указанным паттерном
+        backup_files = glob.glob(os.path.join(BACKUP_DIR, f"{filename_pattern}.*.bak"))
+        
+        # Сортируем по времени изменения (от старых к новым)
+        backup_files.sort(key=os.path.getmtime)
+        
+        # Удаляем старые файлы, если их больше max_backups
+        if len(backup_files) > max_backups:
+            files_to_delete = backup_files[:-max_backups]
+            for file_path in files_to_delete:
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"Удален старый бэкап: {file_path}")
+                except OSError as e:
+                    logger.warning(f"Не удалось удалить старый бэкап {file_path}: {e}")
+    except Exception as e:
+        logger.warning(f"Ошибка при очистке старых бэкапов: {e}")
+        # Не прерываем основной процесс из-за ошибки очистки
+
 def load_data_from_json(filename: str, default_data: Any = None) -> Any:
-    """Безопасно загружает данные из JSON-файла с восстановлением из резервной копии."""
+    """Безопасно загружает данные из JSON-файла с восстановлением из резервной копии.
+    
+    Args:
+        filename: Имя файла (без пути)
+        default_data: Данные по умолчанию, если не удалось загрузить файл
+        
+    Returns:
+        Загруженные данные или default_data
+    """
     filepath = os.path.join(CONFIG["PERSISTENT_STORAGE"], filename)
     backup_filepath = f"{filepath}.bak"
     
     try:
         # Пытаемся прочитать основной файл
         with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            
+            # Проверяем и извлекаем данные, если есть метаданные
+            if isinstance(data, dict) and "_meta" in data and "data" in data:
+                return data["data"]
+            return data
     except (FileNotFoundError, json.JSONDecodeError) as e:
         logger.warning(f"Не удалось загрузить {filename}: {e}. Попытка восстановления из бекапа.")
         
@@ -376,16 +954,38 @@ def load_data_from_json(filename: str, default_data: Any = None) -> Any:
             # Пытаемся восстановить из бекапа
             if os.path.exists(backup_filepath):
                 with open(backup_filepath, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    
+                    # Проверяем и извлекаем данные, если есть метаданные
+                    if isinstance(data, dict) and "_meta" in data and "data" in data:
+                        return data["data"]
+                    return data
         except Exception as be:
             logger.error(f"Не удалось восстановить из бекапа {filename}: {be}")
+        
+        # Если не удалось загрузить из бекапа, ищем в директории бэкапов
+        try:
+            # Находим самый новый бэкап в директории бэкапов
+            backup_files = glob.glob(os.path.join(BACKUP_DIR, f"{filename}.*.bak"))
+            if backup_files:
+                # Сортируем по времени изменения (от новых к старым)
+                backup_files.sort(key=os.path.getmtime, reverse=True)
+                with open(backup_files[0], 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    
+                    # Проверяем и извлекаем данные, если есть метаданные
+                    if isinstance(data, dict) and "_meta" in data and "data" in data:
+                        return data["data"]
+                    return data
+        except Exception as e:
+            logger.error(f"Не удалось восстановить из версионного бэкапа {filename}: {e}")
         
         # Возвращаем данные по умолчанию, если загрузка и восстановление не удались
         return default_data if default_data is not None else {}
 
 def save_user_settings():
     """Сохраняет настройки пользователей в JSON-файл."""
-    save_data_to_json(user_settings, 'user_settings.json')
+    save_data_to_json(user_settings, 'user_settings.json', version=1)
 
 def load_user_settings():
     """Загружает настройки пользователей из JSON-файла."""
@@ -395,7 +995,7 @@ def load_user_settings():
     # Миграция старых настроек и добавление новых полей
     for user_id, settings in user_settings.items():
         if "requests_left" not in settings:
-            user_settings[user_id]["requests_left"] = 10
+            user_settings[user_id]["requests_left"] = CONFIG["MAX_DAILY_REQUESTS"]
             user_settings[user_id]["last_reset"] = str(date.today())
         if "model" not in settings:
             user_settings[user_id]["model"] = ALL_MODELS[0]
@@ -412,6 +1012,18 @@ def load_user_settings():
             user_settings[user_id]["last_active"] = str(date.today())
         if "favorite_models" not in settings:
             user_settings[user_id]["favorite_models"] = []
+        if "is_premium" not in settings:
+            user_settings[user_id]["is_premium"] = False
+        if "premium_until" not in settings:
+            user_settings[user_id]["premium_until"] = None
+        if "language" not in settings:
+            user_settings[user_id]["language"] = "ru"
+        if "notifications_enabled" not in settings:
+            user_settings[user_id]["notifications_enabled"] = True
+        if "auto_translate" not in settings:
+            user_settings[user_id]["auto_translate"] = False
+        if "interface_mode" not in settings:
+            user_settings[user_id]["interface_mode"] = "standard"  # standard/advanced
 
     save_user_settings()
 
@@ -419,7 +1031,7 @@ def save_user_contexts():
     """Сохраняет контексты пользователей в JSON-файл."""
     # Преобразуем ключи (int) в строки для JSON
     serializable_contexts = {str(k): v for k, v in user_contexts.items()}
-    save_data_to_json(serializable_contexts, 'user_contexts.json')
+    save_data_to_json(serializable_contexts, 'user_contexts.json', version=1)
 
 def load_user_contexts():
     """Загружает контексты пользователей из JSON-файла."""
@@ -430,7 +1042,7 @@ def load_user_contexts():
 
 def save_model_performance():
     """Сохраняет данные о производительности моделей."""
-    save_data_to_json(model_performance, 'model_performance.json')
+    save_data_to_json(model_performance, 'model_performance.json', version=1)
 
 def load_model_performance():
     """Загружает данные о производительности моделей."""
@@ -449,6 +1061,104 @@ def load_model_performance():
             }
     
     save_model_performance()
+
+def load_premium_codes():
+    """Загружает премиум-коды из файла."""
+    global premium_codes
+    premium_codes_data = load_data_from_json('premium_codes.json', {"codes": []})
+    premium_codes = set(premium_codes_data.get("codes", []))
+
+def save_premium_codes():
+    """Сохраняет премиум-коды в файл."""
+    save_data_to_json({"codes": list(premium_codes)}, 'premium_codes.json', version=1)
+
+def generate_premium_code() -> str:
+    """Генерирует новый уникальный премиум-код."""
+    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    premium_codes.add(code)
+    save_premium_codes()
+    return code
+
+def is_premium_user(user_id: int) -> bool:
+    """Проверяет, является ли пользователь премиум-пользователем."""
+    if user_id in CONFIG["ADMIN_IDS"]:
+        return True
+        
+    if str(user_id) not in user_settings:
+        return False
+        
+    settings = user_settings[str(user_id)]
+    
+    # Проверяем наличие премиум-статуса и его срок
+    if settings.get("is_premium", False):
+        premium_until = settings.get("premium_until")
+        if premium_until:
+            try:
+                expiry_date = datetime.fromisoformat(premium_until)
+                if expiry_date > datetime.now():
+                    return True
+                else:
+                    # Срок премиум-статуса истек
+                    settings["is_premium"] = False
+                    save_user_settings()
+            except ValueError:
+                # Некорректный формат даты
+                settings["is_premium"] = False
+                save_user_settings()
+        else:
+            # Премиум без ограничения по времени
+            return True
+    
+    return False
+
+def activate_premium(user_id: int, duration_days: int = 30) -> bool:
+    """Активирует премиум-статус для пользователя.
+    
+    Args:
+        user_id: ID пользователя
+        duration_days: Продолжительность премиума в днях (0 = бессрочно)
+        
+    Returns:
+        True если активация успешна, False в случае ошибки
+    """
+    if str(user_id) not in user_settings:
+        user_settings[str(user_id)] = {
+            "model": ALL_MODELS[0],
+            "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
+            "temperature": CONFIG["TEMPERATURE"],
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
+            "last_reset": str(date.today()),
+            "preferred_topics": [],
+            "favorite_models": [],
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
+        }
+    
+    try:
+        user_settings[str(user_id)]["is_premium"] = True
+        
+        if duration_days > 0:
+            # Устанавливаем срок действия премиума
+            premium_until = (datetime.now() + timedelta(days=duration_days)).isoformat()
+            user_settings[str(user_id)]["premium_until"] = premium_until
+        else:
+            # Бессрочный премиум
+            user_settings[str(user_id)]["premium_until"] = None
+            
+        # Добавляем пользователя в список премиум-пользователей
+        if user_id not in CONFIG["PREMIUM_USER_IDS"]:
+            CONFIG["PREMIUM_USER_IDS"].append(user_id)
+            
+        save_user_settings()
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при активации премиум-статуса: {e}")
+        return False
 
 def match_query_with_historical_figure(query: str) -> Optional[Tuple[str, dict]]:
     """Проверяет, относится ли запрос к исторической личности, и возвращает информацию о ней."""
@@ -484,10 +1194,17 @@ def get_user_model(user_id: int, message_text: str = None) -> str:
             "model": ALL_MODELS[0],
             "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
             "temperature": CONFIG["TEMPERATURE"],
-            "requests_left": 10,
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
             "last_reset": str(date.today()),
             "preferred_topics": [],
-            "favorite_models": []
+            "favorite_models": [],
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
         }
         save_user_settings()
     
@@ -726,6 +1443,60 @@ def get_historical_figure_response(figure_key: str, info: dict) -> str:
     
     return response
 
+def create_backup_zip():
+    """Создает полный бэкап данных в формате ZIP."""
+    try:
+        # Создаем имя файла с датой и временем
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"backup_{timestamp}.zip"
+        backup_path = os.path.join(BACKUP_DIR, backup_filename)
+        
+        # Создаем ZIP-архив
+        with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Добавляем все JSON файлы из DATA_DIR
+            for root, _, files in os.walk(DATA_DIR):
+                for file in files:
+                    if file.endswith('.json'):
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, DATA_DIR)
+                        zipf.write(file_path, arcname)
+        
+        # Удаляем старые бэкапы, оставляя только 5 последних
+        backups = glob.glob(os.path.join(BACKUP_DIR, "backup_*.zip"))
+        backups.sort(key=os.path.getmtime)
+        if len(backups) > 5:
+            for old_backup in backups[:-5]:
+                os.remove(old_backup)
+        
+        logger.info(f"Создан полный бэкап данных: {backup_filename}")
+        return backup_path
+    except Exception as e:
+        logger.error(f"Ошибка при создании бэкапа: {e}")
+        return None
+
+def generate_error_report(error_info: Dict[str, Any], include_logs: bool = True) -> str:
+    """Генерирует отчет об ошибке для отправки администраторам."""
+    report = f"🚨 **Отчет об ошибке**\n\n"
+    report += f"**Время**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    report += f"**Версия бота**: {BOT_VERSION}\n\n"
+    
+    report += f"**Функция**: {error_info.get('function', 'Неизвестно')}\n"
+    report += f"**Ошибка**: {error_info.get('exception', 'Неизвестно')}\n\n"
+    
+    # Добавляем Traceback в сокращенном виде
+    traceback_text = error_info.get('traceback', '')
+    if traceback_text:
+        # Ограничиваем длину traceback для отправки в сообщении
+        max_traceback_length = 1000
+        if len(traceback_text) > max_traceback_length:
+            traceback_text = traceback_text[:max_traceback_length] + "...[сокращено]"
+        report += f"**Traceback**:\n```\n{traceback_text}\n```\n\n"
+    
+    report += f"**Активных пользователей**: {len(bot_metrics.active_users)}\n"
+    report += f"**Всего запросов**: {bot_metrics.requests_total}\n"
+    
+    return report
+
 @safe_execution
 async def process_image(photo: PhotoSize) -> Optional[str]:
     """Обрабатывает изображение и возвращает его в base64 кодировке."""
@@ -948,7 +1719,30 @@ async def create_feedback_keyboard(message_id: str) -> InlineKeyboardMarkup:
     
     return builder.as_markup()
 
+async def create_file_processing_keyboard() -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора типа обработки файла."""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="📄 Анализ текста", callback_data="file_process:analyze_text")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="📊 Анализ данных", callback_data="file_process:analyze_data")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="🔍 Извлечь информацию", callback_data="file_process:extract_info")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="file_process:cancel")
+    )
+    
+    return builder.as_markup()
+
 @safe_execution
+@with_retry(max_retries=3, delay=1.0, backoff=2.0)
 async def get_ai_response(user_id: int, message_text: str, image_data: Optional[str] = None) -> str:
     """Получает ответ от API на основе настроек пользователя."""
     # Сначала проверяем, не запрос ли это об известной исторической личности
@@ -967,8 +1761,9 @@ async def get_ai_response(user_id: int, message_text: str, image_data: Optional[
 
     # Проверяем кэш для экономии запросов к API
     cache_key = f"{model}:{message_text}:{temperature}"
-    if cache_key in model_cache and time.time() - model_cache[cache_key]["timestamp"] < CONFIG["CACHE_TIMEOUT"]:
-        return model_cache[cache_key]["response"]
+    cached_response = get_cached_response(cache_key)
+    if cached_response:
+        return cached_response
 
     # Получаем контекст пользователя
     context = get_user_context(user_id)
@@ -1023,10 +1818,7 @@ async def get_ai_response(user_id: int, message_text: str, image_data: Optional[
                 response_time = time.time() - start_time
 
                 # Кэшируем ответ
-                model_cache[cache_key] = {
-                    "response": ai_response,
-                    "timestamp": time.time()
-                }
+                set_cached_response(cache_key, ai_response)
 
                 # Добавляем ответ в контекст пользователя
                 add_to_user_context(user_id, "assistant", ai_response)
@@ -1155,6 +1947,208 @@ async def rephrase_answer(user_id: int, original_text: str, instruction: str) ->
     
     return "❌ Не удалось перефразировать ответ. Пожалуйста, задайте новый вопрос."
 
+async def process_file(user_id: int, file_id: str, file_name: str, process_type: str) -> str:
+    """Обрабатывает файл в зависимости от выбранного типа обработки."""
+    try:
+        # Получаем файл через Telegram Bot API
+        file_info = await bot.get_file(file_id)
+        file_path = file_info.file_path
+        file_url = f"https://api.telegram.org/file/bot{CONFIG['TOKEN']}/{file_path}"
+        
+        # Скачиваем файл
+        response = requests.get(file_url, timeout=CONFIG["REQUEST_TIMEOUT"])
+        response.raise_for_status()
+        
+        # Сохраняем файл во временную директорию
+        user_media_path = os.path.join(USER_MEDIA_DIR, str(user_id))
+        os.makedirs(user_media_path, exist_ok=True)
+        
+        local_file_path = os.path.join(user_media_path, file_name)
+        with open(local_file_path, 'wb') as f:
+            f.write(response.content)
+        
+        # Подготавливаем промпт в зависимости от типа обработки
+        file_extension = os.path.splitext(file_name)[1].lower()
+        file_content = None
+        
+        # Для текстовых файлов читаем содержимое
+        if file_extension in ['.txt', '.md', '.csv', '.json', '.html', '.xml', '.py', '.js', '.css']:
+            with open(local_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                file_content = f.read()
+                
+                # Ограничиваем размер содержимого
+                max_content_length = 10000
+                if len(file_content) > max_content_length:
+                    file_content = file_content[:max_content_length] + f"\n\n[Файл обрезан, показаны первые {max_content_length} символов из {len(file_content)}]"
+        
+        # Формируем промпт в зависимости от типа обработки
+        prompt = ""
+        if process_type == "analyze_text":
+            prompt = f"Проанализируй следующий текстовый файл '{file_name}' и предоставь детальный анализ его содержимого, структуры и ключевых моментов:\n\n{file_content}"
+        elif process_type == "analyze_data":
+            prompt = f"Проанализируй данные из файла '{file_name}' и представь основные статистические показатели, закономерности и выводы:\n\n{file_content}"
+        elif process_type == "extract_info":
+            prompt = f"Извлеки из файла '{file_name}' всю важную информацию, такую как даты, контакты, ключевые факты, и структурируй её в удобном формате:\n\n{file_content}"
+        else:
+            return "❌ Неизвестный тип обработки файла."
+        
+        # Если файл не текстовый, предупреждаем пользователя
+        if not file_content:
+            return f"⚠️ Файл {file_name} не является текстовым документом, который можно проанализировать напрямую. Пожалуйста, загрузите текстовый файл (TXT, MD, CSV, JSON и т.д.)."
+        
+        # Отправляем запрос к API
+        model = get_user_model(user_id)
+        temperature = get_user_temperature(user_id)
+        
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "Вы - эксперт по анализу и обработке данных из файлов различных форматов. Предоставляйте детальные, структурированные и точные ответы."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature,
+            "max_tokens": CONFIG["MAX_TOKENS"]
+        }
+        
+        response = requests.post(
+            f"{CONFIG['API_URL']}/chat/completions",
+            headers={"Authorization": f"Bearer {CONFIG['API_KEY']}"},
+            json=payload,
+            timeout=CONFIG["REQUEST_TIMEOUT"] * 2  # Увеличенный таймаут для обработки файлов
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'choices' in data and data['choices']:
+            result = data['choices'][0]['message']['content']
+            
+            # Очистим файл после обработки
+            try:
+                os.remove(local_file_path)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить временный файл {local_file_path}: {e}")
+            
+            return result
+        else:
+            return "❌ Не удалось получить результат анализа файла. Пожалуйста, попробуйте позже."
+    
+    except Exception as e:
+        logger.error(f"Ошибка при обработке файла: {e}\n{traceback.format_exc()}")
+        return f"❌ Произошла ошибка при обработке файла: {str(e)[:100]}... Пожалуйста, попробуйте позже."
+
+async def verify_bot_startup():
+    """Проверяет успешность запуска бота и работоспособность ключевых компонентов."""
+    issues = []
+    
+    # Проверка токена бота
+    try:
+        me = await bot.get_me()
+        logger.info(f"Подключен к боту: @{me.username} (ID: {me.id})")
+    except Exception as e:
+        issues.append(f"Ошибка подключения к Telegram API: {e}")
+    
+    # Проверка директорий
+    dirs_to_check = [DATA_DIR, LOG_DIR, CACHE_DIR, BACKUP_DIR, USER_MEDIA_DIR, STATS_DIR]
+    for dir_path in dirs_to_check:
+        if not os.path.exists(dir_path) or not os.access(dir_path, os.W_OK):
+            issues.append(f"Директория {dir_path} не существует или недоступна для записи")
+    
+    # Проверка API ключа (без фактических вызовов)
+    if not CONFIG["API_KEY"] or len(CONFIG["API_KEY"]) < 20:
+        issues.append("API_KEY отсутствует или выглядит невалидным")
+    
+    # Проверка URL вебхука
+    if CONFIG["USE_WEBHOOK"]:
+        if not APP_URL or not APP_URL.startswith("http"):
+            issues.append(f"Некорректный URL для webhook: {APP_URL}")
+    
+    # Отчет о проверке
+    if issues:
+        logger.warning("При запуске обнаружены проблемы:")
+        for issue in issues:
+            logger.warning(f" - {issue}")
+            
+        # Отправляем уведомление администраторам
+        for admin_id in CONFIG["ADMIN_IDS"]:
+            try:
+                issue_text = "\n".join([f"- {issue}" for issue in issues])
+                await bot.send_message(
+                    admin_id,
+                    f"⚠️ При запуске бота обнаружены проблемы:\n\n{issue_text}"
+                )
+            except Exception as e:
+                logger.error(f"Не удалось отправить уведомление о проблемах администратору {admin_id}: {e}")
+    else:
+        logger.info("✅ Все проверки при запуске прошли успешно")
+        
+    return len(issues) == 0
+
+async def perform_health_check():
+    """Выполняет периодическую проверку работоспособности бота."""
+    while True:
+        try:
+            # Проверка доступности API
+            api_health = True
+            try:
+                # Простой запрос к API для проверки доступности
+                response = requests.get(
+                    f"{CONFIG['API_URL']}/health",
+                    headers={"Authorization": f"Bearer {CONFIG['API_KEY']}"},
+                    timeout=10
+                )
+                if response.status_code != 200:
+                    api_health = False
+                    logger.warning(f"API недоступен, код ответа: {response.status_code}")
+            except Exception as e:
+                api_health = False
+                logger.warning(f"Ошибка при проверке доступности API: {e}")
+            
+            # Проверка свободного места на диске
+            disk_health = True
+            try:
+                total, used, free = shutil.disk_usage(DATA_DIR)
+                disk_percent_used = used / total * 100
+                
+                if disk_percent_used > 95:  # Если занято более 95% диска
+                    disk_health = False
+                    logger.warning(f"Критически мало свободного места на диске: {disk_percent_used:.1f}% использовано")
+            except Exception as e:
+                logger.warning(f"Ошибка при проверке свободного места на диске: {e}")
+            
+            # Если есть проблемы, отправляем уведомления администраторам
+            if not (api_health and disk_health):
+                for admin_id in CONFIG["ADMIN_IDS"]:
+                    try:
+                        message = "⚠️ Выявлены проблемы при проверке работоспособности:\n\n"
+                        if not api_health:
+                            message += "- API недоступен или возвращает ошибку\n"
+                        if not disk_health:
+                            message += f"- Критически мало свободного места на диске: {disk_percent_used:.1f}% использовано\n"
+                        
+                        await bot.send_message(admin_id, message)
+                    except Exception as e:
+                        logger.error(f"Не удалось отправить уведомление о проблемах администратору {admin_id}: {e}")
+            
+            # Создаем резервную копию данных раз в день
+            if datetime.now().hour == 3:  # Создаем бэкап в 3 часа ночи
+                backup_path = create_backup_zip()
+                if backup_path:
+                    # Уведомляем администратора о создании бэкапа
+                    for admin_id in CONFIG["ADMIN_IDS"]:
+                        try:
+                            await bot.send_message(
+                                admin_id, 
+                                f"✅ Создана резервная копия данных: {os.path.basename(backup_path)}"
+                            )
+                        except Exception as e:
+                            logger.error(f"Не удалось отправить уведомление о бэкапе администратору {admin_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении проверки работоспособности: {e}")
+        
+        # Запускаем проверку с заданным интервалом
+        await asyncio.sleep(CONFIG["HEALTH_CHECK_INTERVAL"])
+
 # Обработчики команд и сообщений
 @router.message(CommandStart())
 @safe_execution
@@ -1168,6 +2162,7 @@ async def cmd_start(message: Message):
     keyboard.add(KeyboardButton(text="🔄 Новый диалог"))
     keyboard.add(KeyboardButton(text="⚙️ Настройки"))
     keyboard.add(KeyboardButton(text="🤖 Выбрать модель"))
+    keyboard.add(KeyboardButton(text="📄 Загрузить файл"))
     keyboard.adjust(2)
 
     welcome_text = (
@@ -1178,7 +2173,8 @@ async def cmd_start(message: Message):
         f"• Написанием и анализом кода\n"
         f"• Созданием и редактированием текстов\n"
         f"• Анализом данных и рассуждениями\n"
-        f"• Анализом изображений (для поддерживаемых моделей)\n\n"
+        f"• Анализом изображений (для поддерживаемых моделей)\n"
+        f"• Обработкой и анализом файлов\n\n"
         f"💡 Просто напишите ваш вопрос или задачу, и я постараюсь помочь!"
     )
 
@@ -1193,11 +2189,17 @@ async def cmd_start(message: Message):
             "model": ALL_MODELS[0],
             "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
             "temperature": CONFIG["TEMPERATURE"],
-            "requests_left": 10,
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
             "last_reset": str(date.today()),
             "preferred_topics": [],
             "favorite_models": [],
-            "last_active": str(date.today())
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
         }
         save_user_settings()
     
@@ -1218,6 +2220,8 @@ async def cmd_help(message: Message):
         "/resetprompt - Сбросить системный промпт\n"
         "/temp - Настроить креативность (temperature)\n"
         "/settings - Показать текущие настройки\n"
+        "/premium - Активировать премиум-режим\n"
+        "/upload - Загрузить файл для анализа\n"
         "/help - Показать эту справку\n\n"
         "📝 **Форматирование:**\n"
         "Бот поддерживает Markdown для кода и текста:\n"
@@ -1228,6 +2232,8 @@ async def cmd_help(message: Message):
         "Бот помнит историю вашего диалога и использует её для более точных ответов."
         "\n\n🔄 **Обратная связь:**\n"
         "После каждого ответа вы можете оценить его качество, что помогает улучшать работу бота."
+        "\n\n📄 **Работа с файлами:**\n"
+        "Отправьте документ или используйте команду /upload, чтобы загрузить файл для анализа."
     )
 
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
@@ -1243,11 +2249,17 @@ async def cmd_settings(message: Message):
             "model": ALL_MODELS[0],
             "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
             "temperature": CONFIG["TEMPERATURE"],
-            "requests_left": 10,
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
             "last_reset": str(date.today()),
             "preferred_topics": [],
             "favorite_models": [],
-            "last_active": str(date.today())
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
         }
         save_user_settings()
 
@@ -1256,10 +2268,30 @@ async def cmd_settings(message: Message):
     system_prompt = settings.get("system_prompt", CONFIG["DEFAULT_SYSTEM_PROMPT"])
     temperature = settings.get("temperature", CONFIG["TEMPERATURE"])
     
+    # Проверяем премиум-статус
+    premium_status = "✅ Активен"
+    if settings.get("is_premium", False):
+        premium_until = settings.get("premium_until")
+        if premium_until:
+            try:
+                expiry_date = datetime.fromisoformat(premium_until)
+                if expiry_date > datetime.now():
+                    days_left = (expiry_date - datetime.now()).days
+                    premium_status = f"✅ Активен (еще {days_left} дн.)"
+                else:
+                    premium_status = "❌ Неактивен (истек)"
+                    settings["is_premium"] = False
+                    save_user_settings()
+            except ValueError:
+                premium_status = "❌ Неактивен"
+        else:
+            premium_status = "✅ Активен (бессрочно)"
+    else:
+        premium_status = "❌ Неактивен"
+    
     # Для обычных пользователей показываем счетчик запросов
     requests_info = ""
-    username = message.from_user.username
-    if not (username and username.lower() == "qqq5599"):
+    if not is_premium_user(user_id):
         requests_left = settings.get("requests_left", 0)
         requests_info = f"\n\n🔢 **Осталось запросов сегодня:** `{requests_left}`"
 
@@ -1269,11 +2301,15 @@ async def cmd_settings(message: Message):
     keyboard.row(InlineKeyboardButton(text="📝 Изменить системный промпт", callback_data="change_prompt"))
     keyboard.row(InlineKeyboardButton(text="🎛️ Настроить креативность", callback_data="change_temp"))
     keyboard.row(InlineKeyboardButton(text="🔄 Начать новый диалог", callback_data="new_chat"))
+    
+    if not is_premium_user(user_id):
+        keyboard.row(InlineKeyboardButton(text="⭐ Активировать премиум", callback_data="activate_premium"))
 
     settings_text = (
         "⚙️ **Текущие настройки:**\n\n"
         f"🤖 **Модель:** `{format_model_name(model)}`\n\n"
         f"🌡️ **Креативность:** `{temperature}`\n\n"
+        f"⭐ **Премиум-статус:** {premium_status}\n\n"
         f"📝 **Системный промпт:**\n```\n{system_prompt}\n```" + requests_info
     )
 
@@ -1372,6 +2408,61 @@ async def cmd_new_chat(message: Message):
         "Задайте мне вопрос или опишите, с чем я могу вам помочь."
     )
 
+@router.message(Command("premium"))
+@safe_execution
+async def cmd_premium(message: Message, state: FSMContext):
+    """Позволяет активировать премиум-режим с помощью кода."""
+    user_id = message.from_user.id
+    
+    # Проверяем, является ли пользователь уже премиум-пользователем
+    if is_premium_user(user_id):
+        # Определяем срок действия премиума
+        premium_until = user_settings.get(str(user_id), {}).get("premium_until")
+        if premium_until:
+            try:
+                expiry_date = datetime.fromisoformat(premium_until)
+                days_left = (expiry_date - datetime.now()).days
+                await message.answer(
+                    f"⭐ У вас уже активирован премиум-режим!\n\n"
+                    f"Срок действия: еще {days_left} дней.\n\n"
+                    f"Премиум дает вам неограниченное количество запросов и доступ ко всем функциям бота."
+                )
+            except ValueError:
+                await message.answer(
+                    "⭐ У вас уже активирован премиум-режим!\n\n"
+                    "Премиум дает вам неограниченное количество запросов и доступ ко всем функциям бота."
+                )
+        else:
+            await message.answer(
+                "⭐ У вас уже активирован бессрочный премиум-режим!\n\n"
+                "Премиум дает вам неограниченное количество запросов и доступ ко всем функциям бота."
+            )
+        return
+    
+    # Переходим в состояние ожидания кода
+    await state.set_state(UserStates.waiting_for_premium_code)
+    
+    await message.answer(
+        "⭐ Для активации премиум-режима введите код активации.\n\n"
+        "Премиум-режим дает вам:\n"
+        "• Неограниченное количество запросов\n"
+        "• Приоритетный доступ к наиболее мощным моделям\n"
+        "• Доступ ко всем функциям бота без ограничений\n\n"
+        "Для отмены введите 'отмена'."
+    )
+
+@router.message(Command("upload"))
+@safe_execution
+async def cmd_upload(message: Message):
+    """Инструктирует пользователя, как загрузить файл для анализа."""
+    await message.answer(
+        "📄 Для анализа файла вы можете:\n\n"
+        "1) Прикрепить файл напрямую к сообщению\n"
+        "2) Загрузить документ через кнопку скрепки 📎\n\n"
+        "Поддерживаемые форматы: TXT, MD, CSV, JSON, HTML, XML, PY, JS, CSS и другие текстовые файлы.\n\n"
+        "После загрузки вы сможете выбрать тип анализа файла."
+    )
+
 @router.callback_query(lambda c: c.data == "new_chat")
 @safe_execution
 async def callback_new_chat(callback: CallbackQuery):
@@ -1435,6 +2526,30 @@ async def callback_change_temp(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+@router.callback_query(lambda c: c.data == "activate_premium")
+@safe_execution
+async def callback_activate_premium(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки активации премиума."""
+    user_id = callback.from_user.id
+    
+    # Проверяем, является ли пользователь уже премиум-пользователем
+    if is_premium_user(user_id):
+        await callback.answer("У вас уже активирован премиум-режим!")
+        return
+    
+    # Переходим в состояние ожидания кода
+    await state.set_state(UserStates.waiting_for_premium_code)
+    
+    await callback.message.answer(
+        "⭐ Для активации премиум-режима введите код активации.\n\n"
+        "Премиум-режим дает вам:\n"
+        "• Неограниченное количество запросов\n"
+        "• Приоритетный доступ к наиболее мощным моделям\n"
+        "• Доступ ко всем функциям бота без ограничений\n\n"
+        "Для отмены введите 'отмена'."
+    )
+    await callback.answer()
+
 @router.callback_query(lambda c: c.data.startswith("category:"))
 @safe_execution
 async def callback_select_category(callback: CallbackQuery):
@@ -1482,6 +2597,48 @@ async def callback_enter_model_manually(callback: CallbackQuery, state: FSMConte
     )
     await callback.answer()
 
+@router.callback_query(lambda c: c.data.startswith("file_process:"))
+@safe_execution
+async def callback_file_processing(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора типа обработки файла."""
+    user_id = callback.from_user.id
+    process_type = callback.data.split(":", 1)[1]
+    
+    # Если пользователь отменил выбор
+    if process_type == "cancel":
+        await state.clear()
+        await callback.message.edit_text("⚠️ Обработка файла отменена.")
+        await callback.answer()
+        return
+    
+    # Получаем данные о файле из состояния
+    data = await state.get_data()
+    file_id = data.get("file_id")
+    file_name = data.get("file_name")
+    
+    if not file_id or not file_name:
+        await callback.message.edit_text("⚠️ Информация о файле утеряна. Пожалуйста, загрузите файл заново.")
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # Удаляем кнопки с типами обработки
+    await callback.message.edit_text(
+        f"⏳ Начинаю обработку файла '{file_name}'...\n\n"
+        f"Тип обработки: {process_type.replace('_', ' ').title()}\n\n"
+        f"Пожалуйста, подождите, это может занять некоторое время."
+    )
+    
+    # Обрабатываем файл
+    result = await process_file(user_id, file_id, file_name, process_type)
+    
+    # Отправляем результат обработки
+    await split_and_send_message(callback.message, result)
+    
+    # Очищаем состояние
+    await state.clear()
+    await callback.answer()
+
 @router.message(StateFilter(UserStates.waiting_for_direct_model))
 @safe_execution
 async def process_direct_model(message: Message, state: FSMContext):
@@ -1510,11 +2667,17 @@ async def process_direct_model(message: Message, state: FSMContext):
         user_settings[str(user_id)] = {
             "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
             "temperature": CONFIG["TEMPERATURE"],
-            "requests_left": 10,
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
             "last_reset": str(date.today()),
             "preferred_topics": [],
             "favorite_models": [],
-            "last_active": str(date.today())
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
         }
     
     # Сохраняем предыдущую модель
@@ -1545,6 +2708,49 @@ async def process_direct_model(message: Message, state: FSMContext):
         parse_mode=ParseMode.MARKDOWN
     )
 
+@router.message(StateFilter(UserStates.waiting_for_premium_code))
+@safe_execution
+async def process_premium_code(message: Message, state: FSMContext):
+    """Обрабатывает ввод промо-кода для активации премиума."""
+    code = message.text.strip()
+    user_id = message.from_user.id
+    
+    # Проверка на отмену
+    if code.lower() in ['отмена', 'cancel', 'отмен', 'стоп', 'stop']:
+        await state.clear()
+        await message.answer("❌ Активация премиум-режима отменена.")
+        return
+    
+    # Загружаем премиум-коды, если еще не загружены
+    if not premium_codes:
+        load_premium_codes()
+    
+    # Проверяем валидность кода
+    if code in premium_codes:
+        # Активируем премиум для пользователя (на 30 дней)
+        if activate_premium(user_id, 30):
+            # Удаляем использованный код
+            premium_codes.remove(code)
+            save_premium_codes()
+            
+            await message.answer(
+                "🎉 Поздравляем! Премиум-режим успешно активирован на 30 дней!\n\n"
+                "Теперь вы имеете доступ ко всем функциям бота без ограничений и неограниченное количество запросов."
+            )
+        else:
+            await message.answer(
+                "❌ Произошла ошибка при активации премиум-режима. Пожалуйста, попробуйте позже или обратитесь к администратору."
+            )
+    else:
+        await message.answer(
+            "❌ Неверный код активации. Пожалуйста, проверьте код и попробуйте снова, или напишите 'отмена' для выхода."
+        )
+        # Не очищаем состояние, чтобы пользователь мог попробовать еще раз
+        return
+    
+    # Возвращаемся к нормальному состоянию
+    await state.clear()
+
 @router.callback_query(lambda c: c.data.startswith("model:"))
 @safe_execution
 async def callback_select_model(callback: CallbackQuery, state: FSMContext):
@@ -1557,11 +2763,17 @@ async def callback_select_model(callback: CallbackQuery, state: FSMContext):
         user_settings[str(user_id)] = {
             "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
             "temperature": CONFIG["TEMPERATURE"],
-            "requests_left": 10,
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
             "last_reset": str(date.today()),
             "preferred_topics": [],
             "favorite_models": [],
-            "last_active": str(date.today())
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
         }
 
     user_settings[str(user_id)]["model"] = model
@@ -1600,11 +2812,17 @@ async def callback_select_temperature(callback: CallbackQuery, state: FSMContext
         user_settings[str(user_id)] = {
             "model": ALL_MODELS[0],
             "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
-            "requests_left": 10,
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
             "last_reset": str(date.today()),
             "preferred_topics": [],
             "favorite_models": [],
-            "last_active": str(date.today())
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
         }
 
     user_settings[str(user_id)]["temperature"] = temperature
@@ -1751,11 +2969,17 @@ async def process_custom_prompt(message: Message, state: FSMContext):
         user_settings[str(user_id)] = {
             "model": ALL_MODELS[0],
             "temperature": CONFIG["TEMPERATURE"],
-            "requests_left": 10,
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
             "last_reset": str(date.today()),
             "preferred_topics": [],
             "favorite_models": [],
-            "last_active": str(date.today())
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard"
         }
 
     user_settings[str(user_id)]["system_prompt"] = new_prompt
@@ -1796,6 +3020,145 @@ async def process_custom_prompt(message: Message, state: FSMContext):
         "Теперь вы можете продолжить диалог с учетом новых инструкций."
     )
 
+@router.message(StateFilter(UserStates.waiting_for_image_caption))
+@safe_execution
+async def process_image_caption(message: Message, state: FSMContext):
+    """Обрабатывает подпись к изображению."""
+    # Получаем файл из состояния
+    data = await state.get_data()
+    image_data = data.get("image_data")
+    
+    if not image_data:
+        await message.answer("⚠️ Изображение не найдено. Пожалуйста, отправьте изображение заново.")
+        await state.clear()
+        return
+    
+    # Получаем подпись от пользователя
+    caption = message.text
+    
+    # Если пользователь отменил
+    if caption.lower() in ['отмена', 'cancel', 'стоп', 'stop']:
+        await message.answer("❌ Обработка изображения отменена.")
+        await state.clear()
+        return
+    
+    # Добавляем сообщение пользователя (обрабатываем как обычное сообщение)
+    user_id = message.from_user.id
+    
+    # Показываем, что бот "печатает"
+    await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
+    
+    # Получаем ответ от AI
+    ai_response = await get_ai_response(user_id, caption, image_data)
+    
+    # Отправляем ответ
+    ai_response = clean_markdown(ai_response)
+    sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
+    
+    # Добавляем кнопки обратной связи
+    feedback_id = str(uuid.uuid4())
+    try:
+        await sent_message.edit_reply_markup(reply_markup=await create_feedback_keyboard(feedback_id))
+    except Exception as e:
+        logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
+    
+    # Очищаем состояние
+    await state.clear()
+
+@router.message(StateFilter(UserStates.waiting_for_admin_broadcast))
+@admin_only
+@safe_execution
+async def process_broadcast_message(message: Message, state: FSMContext):
+    """Обрабатывает сообщение для рассылки от администратора."""
+    broadcast_text = message.text
+    
+    # Если пользователь отменил
+    if broadcast_text.lower() in ['отмена', 'cancel', 'стоп', 'stop']:
+        await message.answer("✅ Рассылка отменена.")
+        await state.clear()
+        return
+    
+    # Запрашиваем подтверждение
+    keyboard = InlineKeyboardBuilder()
+    keyboard.row(
+        InlineKeyboardButton(text="✅ Подтвердить", callback_data="broadcast_confirm"),
+        InlineKeyboardButton(text="❌ Отменить", callback_data="broadcast_cancel")
+    )
+    
+    # Сохраняем текст рассылки в состоянии
+    await state.update_data(broadcast_text=broadcast_text)
+    
+    await message.answer(
+        f"📢 Текст рассылки:\n\n{broadcast_text}\n\n"
+        f"Подтвердите отправку всем пользователям бота.",
+        reply_markup=keyboard.as_markup()
+    )
+
+@router.callback_query(lambda c: c.data == "broadcast_confirm")
+@safe_execution
+async def callback_broadcast_confirm(callback: CallbackQuery, state: FSMContext):
+    """Обработчик подтверждения рассылки."""
+    # Получаем текст рассылки из состояния
+    data = await state.get_data()
+    broadcast_text = data.get("broadcast_text")
+    
+    if not broadcast_text:
+        await callback.message.edit_text("⚠️ Текст рассылки не найден. Пожалуйста, начните процесс заново.")
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # Удаляем кнопки подтверждения
+    await callback.message.edit_text(
+        f"📢 Начинаю рассылку сообщения:\n\n{broadcast_text}\n\n"
+        f"Пожалуйста, дождитесь завершения."
+    )
+    
+    # Получаем всех уникальных пользователей
+    all_users = set()
+    for user_id in user_settings:
+        try:
+            all_users.add(int(user_id))
+        except (ValueError, TypeError):
+            continue
+    
+    # Счетчики для статистики
+    success_count = 0
+    fail_count = 0
+    
+    # Отправляем сообщение всем пользователям
+    for user_id in all_users:
+        try:
+            await bot.send_message(user_id, broadcast_text)
+            success_count += 1
+            
+            # Делаем небольшую паузу между отправками, чтобы не превысить лимиты Telegram
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.warning(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+            fail_count += 1
+    
+    # Отправляем отчет администратору
+    await callback.message.answer(
+        f"✅ Рассылка завершена!\n\n"
+        f"📊 Статистика:\n"
+        f"- Всего пользователей: {len(all_users)}\n"
+        f"- Успешно доставлено: {success_count}\n"
+        f"- Ошибок доставки: {fail_count}"
+    )
+    
+    # Очищаем состояние
+    await state.clear()
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "broadcast_cancel")
+@safe_execution
+async def callback_broadcast_cancel(callback: CallbackQuery, state: FSMContext):
+    """Обработчик отмены рассылки."""
+    await callback.message.edit_text("✅ Рассылка отменена.")
+    await state.clear()
+    await callback.answer()
+
 @router.message(F.text == "🔄 Новый диалог")
 @safe_execution
 async def handle_new_chat_button(message: Message):
@@ -1824,9 +3187,67 @@ async def handle_models_button(message: Message, state: FSMContext):
     """Обработчик кнопки "Выбрать модель" на клавиатуре."""
     await cmd_models(message, state)
 
+@router.message(F.text == "📄 Загрузить файл")
+@safe_execution
+async def handle_upload_button(message: Message):
+    """Обработчик кнопки "Загрузить файл" на клавиатуре."""
+    await cmd_upload(message)
+
+@router.message(F.document)
+@safe_execution
+async def handle_document(message: Message, state: FSMContext):
+    """Обрабатывает загрузку документа."""
+    user_id = message.from_user.id
+    username = message.from_user.username
+    
+    # Обновляем дату последней активности пользователя
+    if str(user_id) in user_settings:
+        user_settings[str(user_id)]["last_active"] = str(date.today())
+        save_user_settings()
+    
+    # Проверяем лимиты для обычных пользователей
+    if not (is_premium_user(user_id) or username == "qqq5599"):
+        # Проверяем и обновляем количество запросов
+        today = date.today().strftime("%Y-%m-%d")
+        if str(user_id) in user_settings:
+            if user_settings[str(user_id)].get("last_reset") != today:
+                user_settings[str(user_id)]["requests_left"] = CONFIG["MAX_DAILY_REQUESTS"]
+                user_settings[str(user_id)]["last_reset"] = today
+                save_user_settings()
+            
+            if user_settings[str(user_id)].get("requests_left", 0) <= 0:
+                await message.answer("❌ Лимит запросов на сегодня исчерпан. Пожалуйста, попробуйте завтра или активируйте премиум-режим.")
+                return
+            
+            user_settings[str(user_id)]["requests_left"] -= 1
+            save_user_settings()
+    
+    # Получаем информацию о файле
+    file_id = message.document.file_id
+    file_name = message.document.file_name or "document.txt"
+    file_size = message.document.file_size
+    
+    # Проверяем размер файла
+    if file_size > CONFIG["MAX_FILE_SIZE"]:
+        await message.answer(
+            f"❌ Файл слишком большой. Максимальный размер: {CONFIG['MAX_FILE_SIZE'] / (1024 * 1024):.1f} МБ."
+        )
+        return
+    
+    # Сохраняем информацию о файле в состоянии
+    await state.set_state(UserStates.waiting_for_file_processing)
+    await state.update_data(file_id=file_id, file_name=file_name)
+    
+    # Предлагаем типы обработки файла
+    await message.answer(
+        f"📄 Файл '{file_name}' получен!\n\n"
+        f"Выберите тип обработки файла:",
+        reply_markup=await create_file_processing_keyboard()
+    )
+
 @router.message(F.photo)
 @safe_execution
-async def handle_photo(message: Message):
+async def handle_photo(message: Message, state: FSMContext):
     """Обрабатывает сообщения с фотографиями."""
     user_id = message.from_user.id
     username = message.from_user.username
@@ -1836,17 +3257,17 @@ async def handle_photo(message: Message):
         user_settings[str(user_id)]["last_active"] = str(date.today())
         save_user_settings()
 
-    # Проверяем лимиты для пользователей (кроме qqq5599)
-    if not (username and username.lower() == "qqq5599"):
+    # Проверяем лимиты для пользователей (кроме премиум и qqq5599)
+    if not (is_premium_user(user_id) or username == "qqq5599"):
         if str(user_id) in user_settings:
             today = date.today().strftime("%Y-%m-%d")
             if user_settings[str(user_id)].get("last_reset") != today:
-                user_settings[str(user_id)]["requests_left"] = 10
+                user_settings[str(user_id)]["requests_left"] = CONFIG["MAX_DAILY_REQUESTS"]
                 user_settings[str(user_id)]["last_reset"] = today
                 save_user_settings()
             
             if user_settings[str(user_id)].get("requests_left", 0) <= 0:
-                await message.answer("❌ Лимит запросов на сегодня исчерпан. Пожалуйста, попробуйте завтра.")
+                await message.answer("❌ Лимит запросов на сегодня исчерпан. Пожалуйста, попробуйте завтра или активируйте премиум-режим.")
                 return
             
             user_settings[str(user_id)]["requests_left"] -= 1
@@ -1855,8 +3276,31 @@ async def handle_photo(message: Message):
     # Получаем фото наилучшего качества
     photo = message.photo[-1]
 
-    # Получаем подпись к фото или используем дефолтный текст
-    caption = message.caption or "Что на этом изображении?"
+    # Получаем подпись к фото или запрашиваем её
+    caption = message.caption
+    if not caption:
+        # Получаем base64 изображения
+        image_data = await process_image(photo)
+        if not image_data:
+            await message.answer(
+                "❌ Не удалось обработать изображение. Убедитесь, что оно в формате JPG, JPEG, PNG или WEBP "
+                "и его размер не превышает 10 МБ."
+            )
+            return
+            
+        # Сохраняем изображение в состоянии и запрашиваем подпись
+        await state.set_state(UserStates.waiting_for_image_caption)
+        await state.update_data(image_data=image_data)
+        
+        await message.answer(
+            "🖼️ Изображение успешно загружено! Пожалуйста, опишите, что вы хотите узнать об этом изображении.\n\n"
+            "Например:\n"
+            "- Что изображено на этой фотографии?\n"
+            "- Опиши детали этого изображения\n"
+            "- Какие объекты присутствуют на фото?\n\n"
+            "Или введите 'отмена' для отмены."
+        )
+        return
 
     # Проверяем, поддерживает ли текущая модель анализ изображений
     current_model = get_user_model(user_id)
@@ -1873,11 +3317,17 @@ async def handle_photo(message: Message):
                 user_settings[str(user_id)] = {
                     "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
                     "temperature": CONFIG["TEMPERATURE"],
-                    "requests_left": 10,
+                    "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
                     "last_reset": str(date.today()),
                     "preferred_topics": [],
                     "favorite_models": [],
-                    "last_active": str(date.today())
+                    "last_active": str(date.today()),
+                    "is_premium": False,
+                    "premium_until": None,
+                    "language": "ru",
+                    "notifications_enabled": True,
+                    "auto_translate": False,
+                    "interface_mode": "standard"
                 }
 
             # Запоминаем предыдущую модель
@@ -1950,57 +3400,200 @@ async def handle_photo(message: Message):
         except Exception as e:
             logger.warning(f"Не удалось добавить кнопки обратной связи: {e}")
 
+# Admin command - generate premium code
+@router.message(Command("gencode"))
+@admin_only
+@safe_execution
+async def cmd_generate_code(message: Message):
+    """Генерирует премиум-код для активации (только для администраторов)."""
+    # Загружаем премиум-коды, если еще не загружены
+    if not premium_codes:
+        load_premium_codes()
+    
+    # Генерируем новый код
+    new_code = generate_premium_code()
+    
+    await message.answer(
+        f"✅ Новый премиум-код создан: `{new_code}`\n\n"
+        f"Этот код можно использовать для активации премиум-режима на 30 дней.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+# Admin command - send broadcast
+@router.message(Command("broadcast"))
+@admin_only
+@safe_execution
+async def cmd_broadcast(message: Message, state: FSMContext):
+    """Отправляет сообщение всем пользователям бота (только для администраторов)."""
+    await state.set_state(UserStates.waiting_for_admin_broadcast)
+    
+    await message.answer(
+        "📢 Режим рассылки сообщений.\n\n"
+        "Введите текст, который будет отправлен всем пользователям бота.\n\n"
+        "Для отмены напишите 'отмена'."
+    )
+
+# Admin command - get statistics
+@router.message(Command("stats"))
+@admin_only
+@safe_execution
+async def cmd_stats(message: Message):
+    """Показывает статистику бота (только для администраторов)."""
+    stats = bot_metrics.get_stats()
+    
+    stats_text = (
+        f"📊 **Статистика бота**\n\n"
+        f"⏱️ **Время работы**: {stats['uptime_formatted']}\n"
+        f"👥 **Активных пользователей**: {stats['users']['active_count']}\n\n"
+        f"🔢 **Запросы**:\n"
+        f"- Всего: {stats['requests']['total']}\n"
+        f"- Успешных: {stats['requests']['success']}\n"
+        f"- Неудачных: {stats['requests']['failed']}\n"
+        f"- Процент успеха: {stats['requests']['success_rate']:.1f}%\n\n"
+        f"⏱️ **Время ответа**:\n"
+        f"- Среднее: {stats['response_time']['average_ms']:.0f} мс\n"
+        f"- Минимальное: {stats['response_time']['min_ms']:.0f} мс\n"
+        f"- Максимальное: {stats['response_time']['max_ms']:.0f} мс\n\n"
+    )
+    
+    # Добавляем топ-3 модели по использованию
+    stats_text += "📈 **Топ модели**:\n"
+    top_models = list(stats['models'].items())[:3]
+    for i, (model, count) in enumerate(top_models, 1):
+        model_name = model.split('/')[-1]
+        stats_text += f"{i}. {model_name}: {count} запросов\n"
+    
+    stats_text += "\n🔍 **Топ темы**:\n"
+    top_topics = list(stats['topics'].items())[:3]
+    for i, (topic, count) in enumerate(top_topics, 1):
+        stats_text += f"{i}. {topic.capitalize()}: {count} запросов\n"
+    
+    # Добавляем топ ошибок
+    stats_text += "\n❌ **Частые ошибки**:\n"
+    for error, count in list(stats['top_errors'].items())[:3]:
+        # Сокращаем слишком длинные сообщения об ошибках
+        error_text = error[:50] + "..." if len(error) > 50 else error
+        stats_text += f"- {error_text}: {count} раз\n"
+    
+    await message.answer(stats_text, parse_mode=ParseMode.MARKDOWN)
+
+# Admin command - create backup
+@router.message(Command("backup"))
+@admin_only
+@safe_execution
+async def cmd_backup(message: Message):
+    """Создает резервную копию данных (только для администраторов)."""
+    await message.answer("⏳ Создаю резервную копию данных...")
+    
+    backup_path = create_backup_zip()
+    if backup_path:
+        # Отправляем файл бэкапа
+        try:
+            await message.answer_document(
+                FSInputFile(backup_path, filename=os.path.basename(backup_path)),
+                caption=f"✅ Резервная копия данных создана {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        except Exception as e:
+            await message.answer(f"⚠️ Резервная копия создана, но не удалось отправить файл: {e}")
+    else:
+        await message.answer("❌ Не удалось создать резервную копию данных.")
+
+# Admin command - maintenance mode
+@router.message(Command("maintenance"))
+@admin_only
+@safe_execution
+async def cmd_maintenance(message: Message):
+    """Включает или выключает режим технического обслуживания (только для администраторов)."""
+    # Переключаем режим обслуживания
+    CONFIG["MAINTENANCE_MODE"] = not CONFIG["MAINTENANCE_MODE"]
+    
+    if CONFIG["MAINTENANCE_MODE"]:
+        await message.answer(
+            "🔧 Режим технического обслуживания **ВКЛЮЧЕН**\n\n"
+            "Бот будет отвечать только администраторам. Всем остальным пользователям будет показано сообщение о техническом обслуживании.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        await message.answer(
+            "✅ Режим технического обслуживания **ВЫКЛЮЧЕН**\n\n"
+            "Бот снова доступен для всех пользователей.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
 @router.message()
 @safe_execution
+@rate_limit
 async def handle_message(message: Message, state: FSMContext):
     """Обрабатывает все остальные текстовые сообщения."""
+    # Проверяем режим обслуживания
+    if CONFIG["MAINTENANCE_MODE"] and message.from_user.id not in CONFIG["ADMIN_IDS"]:
+        await message.answer(
+            "🔧 Бот находится на техническом обслуживании.\n\n"
+            "Пожалуйста, попробуйте позже. Приносим извинения за временные неудобства."
+        )
+        return
+    
     # Проверяем, не является ли сообщение простым приветствием
     greeting_response = is_greeting(message.text)
     if greeting_response:
         await message.answer(greeting_response)
         return
 
-    user_id = str(message.from_user.id)
+    user_id = message.from_user.id
     username = message.from_user.username
 
     # Обновляем дату последней активности пользователя
-    if user_id in user_settings:
-        user_settings[user_id]["last_active"] = str(date.today())
+    if str(user_id) in user_settings:
+        user_settings[str(user_id)]["last_active"] = str(date.today())
         save_user_settings()
 
     # Проверяем и обновляем количество запросов
-    if username and username.lower() == "qqq5599":
-        # Пользователь с именем qqq5599 имеет безлимитный доступ
-        pass  # Безлимит
-    else:
+    if not (is_premium_user(user_id) or username == "qqq5599"):
         today = date.today().strftime("%Y-%m-%d")
-        if user_id not in user_settings:
+        if str(user_id) not in user_settings:
             # Инициализируем настройки для нового пользователя
-            user_settings[user_id] = {
+            user_settings[str(user_id)] = {
                 "model": ALL_MODELS[0],
                 "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
                 "temperature": CONFIG["TEMPERATURE"],
-                "requests_left": 10,
+                "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
                 "last_reset": today,
                 "preferred_topics": [],
                 "favorite_models": [],
-                "last_active": today
+                "last_active": today,
+                "is_premium": False,
+                "premium_until": None,
+                "language": "ru",
+                "notifications_enabled": True,
+                "auto_translate": False,
+                "interface_mode": "standard"
             }
             save_user_settings()
-        elif user_settings[user_id].get("last_reset") != today:
-            user_settings[user_id]["requests_left"] = 10
-            user_settings[user_id]["last_reset"] = today
+        elif user_settings[str(user_id)].get("last_reset") != today:
+            user_settings[str(user_id)]["requests_left"] = CONFIG["MAX_DAILY_REQUESTS"]
+            user_settings[str(user_id)]["last_reset"] = today
             save_user_settings()
 
-        if user_settings[user_id].get("requests_left", 0) <= 0:
-            await message.answer("❌ Лимит запросов на сегодня исчерпан. Пожалуйста, попробуйте завтра.")
+        if user_settings[str(user_id)].get("requests_left", 0) <= 0:
+            # Создаем клавиатуру для активации премиума
+            keyboard = InlineKeyboardBuilder()
+            keyboard.row(InlineKeyboardButton(
+                text="⭐ Активировать премиум", 
+                callback_data="activate_premium"
+            ))
+            
+            await message.answer(
+                "❌ Лимит запросов на сегодня исчерпан.\n\n"
+                "Чтобы получить неограниченный доступ, активируйте премиум-режим!",
+                reply_markup=keyboard.as_markup()
+            )
             return
 
-        user_settings[user_id]["requests_left"] -= 1
+        user_settings[str(user_id)]["requests_left"] -= 1
         save_user_settings()
 
     # Показываем, что бот "печатает"
-    await bot.send_chat_action(chat_id=int(user_id), action=ChatAction.TYPING)
+    await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
 
     # Определяем тему вопроса для возможного выбора специализированной модели
     topic = detect_question_topic(message.text)
@@ -2009,7 +3602,7 @@ async def handle_message(message: Message, state: FSMContext):
 
     # Получаем ответ от AI
     start_time = time.time()
-    ai_response = await get_ai_response(int(user_id), message.text)
+    ai_response = await get_ai_response(user_id, message.text)
     response_time = time.time() - start_time
     
     logger.info(f"Получен ответ за {response_time:.2f} секунд")
@@ -2075,6 +3668,18 @@ async def cleanup_old_data():
                 if current_time - model_cache[key]["timestamp"] > CONFIG["CACHE_TIMEOUT"]:
                     del model_cache[key]
             
+            # Очищаем файлы временного хранилища пользователей
+            for user_folder in glob.glob(os.path.join(USER_MEDIA_DIR, "*")):
+                try:
+                    # Удаляем файлы старше 24 часов
+                    for user_file in glob.glob(os.path.join(user_folder, "*")):
+                        file_time = os.path.getmtime(user_file)
+                        if current_time - file_time > 86400:  # 24 часа
+                            os.remove(user_file)
+                            logger.debug(f"Удален устаревший файл: {user_file}")
+                except Exception as e:
+                    logger.warning(f"Ошибка при очистке файлов пользователя: {e}")
+            
             # Архивируем контексты неактивных пользователей
             today = date.today()
             inactive_threshold = 30  # Дней
@@ -2105,6 +3710,9 @@ async def cleanup_old_data():
             # Сохраняем очищенные контексты
             save_user_contexts()
             
+            # Очищаем старые файлы метрик
+            bot_metrics._cleanup_old_metrics(48)  # Оставляем метрики за 48 часов
+            
             logger.info("Очистка устаревших данных завершена")
         
         except Exception as e:
@@ -2112,9 +3720,6 @@ async def cleanup_old_data():
         
         # Запускаем очистку раз в день
         await asyncio.sleep(86400)  # 24 часа
-
-# Определяем веб-приложение для API
-app = web.Application()
 
 # Обработчик для webhook
 async def handle_webhook(request):
@@ -2127,14 +3732,14 @@ async def handle_webhook(request):
     
     try:
         update = json.loads(request_body)
-        update_id = update['update_id']
         
-        # Обработка обновления
-        await dp.feed_update(bot=bot, update=update)
+        # В aiogram 3.x изменился способ обработки обновлений
+        # Используем правильный метод для передачи обновления в диспетчер
+        await dp.feed_update(bot, update)
         
         return web.Response(status=200)
     except Exception as e:
-        logger.error(f"Ошибка обработки вебхука: {e}")
+        logger.error(f"Ошибка обработки вебхука: {e}\n{traceback.format_exc()}")
         return web.Response(status=500)
 
 # Добавляем простой обработчик для домашней страницы
@@ -2147,16 +3752,75 @@ async def handle_health(request):
     """Обработчик для проверки статуса сервиса."""
     response = {
         "status": "online",
-        "version": "1.0.0",
+        "version": BOT_VERSION,
         "uptime": time.time() - start_time,
+        "maintenance_mode": CONFIG["MAINTENANCE_MODE"],
         "timestamp": time.time()
     }
     return web.json_response(response)
 
+# Обработчик для получения статистики бота
+async def handle_stats(request):
+    """Обработчик для получения статистики бота."""
+    # Простая защита на основе ключа
+    auth_key = request.query.get('key')
+    if auth_key != CONFIG.get("STATS_API_KEY", "statskey"):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    
+    stats = bot_metrics.get_stats()
+    return web.json_response(stats)
+
 # Настраиваем маршруты
+app = web.Application()
 app.router.add_get('/', handle_home)
 app.router.add_get('/health', handle_health)
+app.router.add_get('/stats', handle_stats)
 app.router.add_post('/webhook/{token}', handle_webhook)
+
+# Обрабатываем неожиданные завершения и перезапускаем бота
+async def start_bot_with_recovery():
+    """Запускает бота с автоматическим восстановлением при сбоях."""
+    max_restarts = 5
+    restart_count = 0
+    restart_delay = 5  # начальная задержка в секундах
+    
+    while restart_count < max_restarts:
+        try:
+            await main()
+            # Если main() завершился нормально, выходим из цикла
+            break
+        except Exception as e:
+            restart_count += 1
+            logger.critical(
+                f"Критическая ошибка в работе бота: {e}\n{traceback.format_exc()}\n"
+                f"Перезапуск {restart_count}/{max_restarts} через {restart_delay} секунд"
+            )
+            
+            # Отправляем уведомление администраторам
+            for admin_id in CONFIG["ADMIN_IDS"]:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f"🚨 Критическая ошибка бота:\n{str(e)[:500]}\n\nПерезапуск {restart_count}/{max_restarts}"
+                    )
+                except Exception as notify_error:
+                    logger.error(f"Не удалось уведомить администратора {admin_id}: {notify_error}")
+            
+            # Увеличиваем задержку с каждым перезапуском (экспоненциальный backoff)
+            await asyncio.sleep(restart_delay)
+            restart_delay *= 2  # увеличиваем задержку в 2 раза с каждым перезапуском
+            
+    if restart_count >= max_restarts:
+        logger.critical(f"Бот не может быть запущен после {max_restarts} попыток. Завершение работы.")
+        # Финальное уведомление администраторам перед выходом
+        for admin_id in CONFIG["ADMIN_IDS"]:
+            try:
+                await bot.send_message(
+                    admin_id, 
+                    f"🚨 Критическая ошибка: бот не может быть запущен после {max_restarts} попыток."
+                )
+            except Exception:
+                pass
 
 # Функция инициализации и запуска бота
 async def main():
@@ -2168,15 +3832,22 @@ async def main():
     load_user_settings()
     load_user_contexts()
     load_model_performance()
+    load_premium_codes()
+    
+    # Проверяем успешность запуска
+    startup_success = await verify_bot_startup()
+    if not startup_success:
+        logger.warning("Бот запущен с предупреждениями. Некоторые функции могут работать некорректно.")
 
     if CONFIG["USE_WEBHOOK"]:
         # Настраиваем вебхук
         webhook_url = f"{APP_URL}/webhook/{CONFIG['TOKEN']}"
-        await bot.set_webhook(url=webhook_url)
+        await bot.set_webhook(url=webhook_url, secret_token=CONFIG["WEBHOOK_SECRET_TOKEN"])
         logger.info(f"Webhook set to {webhook_url}")
         
-        # Запускаем задачу очистки устаревших данных
+        # Запускаем фоновые задачи
         asyncio.create_task(cleanup_old_data())
+        asyncio.create_task(perform_health_check())
         
         # Выводим информацию о запуске
         logger.info(f"Бот запущен в режиме webhook! Используется {len(ALL_MODELS)} моделей.")
@@ -2197,8 +3868,9 @@ async def main():
         # Очищаем веб-хуки и запускаем бота
         await bot.delete_webhook(drop_pending_updates=True)
 
-        # Запускаем задачу очистки устаревших данных
+        # Запускаем фоновые задачи
         asyncio.create_task(cleanup_old_data())
+        asyncio.create_task(perform_health_check())
 
         # Выводим информацию о запуске
         logger.info(f"Бот запущен в режиме polling! Используется {len(ALL_MODELS)} моделей.")
@@ -2211,9 +3883,13 @@ async def main():
         
         logger.info(f"Веб-сервер запущен на порту {PORT}")
 
-        # Запускаем бота
-        await dp.start_polling(bot)
+        # Запускаем бота с использованием правильного метода для aiogram 3.x
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
-    # Запускаем бота в асинхронном режиме
-    asyncio.run(main())
+    try:
+        asyncio.run(start_bot_with_recovery())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен вручную")
+    except Exception as e:
+        logger.critical(f"Неожиданная ошибка: {e}\n{traceback.format_exc()}")
