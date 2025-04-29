@@ -25,11 +25,21 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.utils.chat_action import ChatActionMiddleware
 from aiogram.exceptions import TelegramAPIError
 
+# Конфигурация путей для хранения данных на Render
+# На бесплатном плане можно писать только в /tmp (временное хранилище) 
+# или в директорию проекта /opt/render/project/src/
+DATA_DIR = "/tmp" if os.path.exists("/opt/render") else "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Настройка логирования с учетом ограничений Render
+LOG_DIR = os.path.join(DATA_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
 # Конфигурация и константы
 CONFIG = {
     "API_URL": "https://api.intelligence.io.solutions/api/v1",
-    "TOKEN": os.getenv("TELEGRAM_TOKEN", "7839597384:AAFlm4v3qcudhJfiFfshz1HW6xpKhtqlV5g"),
-    "API_KEY": os.getenv("AI_API_KEY", "io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6ImJlMjYwYjFhLWI0OWMtNDU2MC04ODZiLTMwYTBmMGFlNGZlNSIsImV4cCI6NDg5OTUwNzg0MH0.Z46h1WZ-2jsXyg43r2M0okgeLoSEzrq-ULHRMS-EW6r3ccxYkXTZ5mNJO5Aw1qBAkRI5NX9t8zXc1sbUxt8WzA"),
+    "TOKEN": os.environ.get("TELEGRAM_TOKEN", "7839597384:AAFlm4v3qcudhJfiFfshz1HW6xpKhtqlV5g"),
+    "API_KEY": os.environ.get("AI_API_KEY", "io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6ImJlMjYwYjFhLWI0OWMtNDU2MC04ODZiLTMwYTBmMGFlNGZlNSIsImV4cCI6NDg5OTUwNzg0MH0.Z46h1WZ-2jsXyg43r2M0okgeLoSEzrq-ULHRMS-EW6r3ccxYkXTZ5mNJO5Aw1qBAkRI5NX9t8zXc1sbUxt8WzA"),
     "DEFAULT_SYSTEM_PROMPT": "Вы - полезный AI-ассистент с энциклопедическими знаниями. Предоставляйте точные и информативные ответы. Вы знаете о различных исторических личностях, включая писателей, ученых и философов. Для технических вопросов и примеров кода используйте Markdown-форматирование.",
     "MAX_MESSAGE_LENGTH": 4096,
     "MAX_CONTEXT_LENGTH": 20,  # Увеличено для лучшей контекстной памяти
@@ -41,7 +51,7 @@ CONFIG = {
     "MAX_FILE_SIZE": 10 * 1024 * 1024,  # Максимальный размер файла (10 МБ)
     "CACHE_TIMEOUT": 3600,  # Время жизни кэша в секундах (1 час)
     "FALLBACK_MODE": True,  # Автоматически переключаться на другие модели при ошибке
-    "PERSISTENT_STORAGE": os.getenv("PERSISTENT_STORAGE", "data"),  # Папка для хранения данных
+    "PERSISTENT_STORAGE": DATA_DIR,  # Директория для хранения данных (адаптировано для Render)
     "CONTEXT_DECAY": 0.9,  # Коэффициент важности старых сообщений в контексте (1.0 = все сообщения равнозначны)
     "REQUEST_TIMEOUT": 60,  # Таймаут запросов к API
 }
@@ -133,21 +143,17 @@ TOPIC_PATTERNS = {
     "literature": r"(?i)(литератур|писатель|поэт|стих|роман|повесть|рассказ|книг|поэм)",
 }
 
-# Создаем директории для хранения данных
-os.makedirs(CONFIG["PERSISTENT_STORAGE"], exist_ok=True)
-
 # Настройка логирования с защитой от ошибок файловой системы
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 try:
-    # Создаем директорию для логов если она не существует
-    os.makedirs("logs", exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join("logs", f"bot_{date.today().strftime('%Y-%m-%d')}.log"))
+    # Создаем файловый обработчик логов
+    log_file_path = os.path.join(LOG_DIR, f"bot_{date.today().strftime('%Y-%m-%d')}.log")
+    file_handler = logging.FileHandler(log_file_path)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(file_handler)
 except Exception as e:
-    # В случае ошибки при работе с файловой системой
     print(f"Не удалось настроить файловый логгер: {e}")
     # Продолжаем работу без файлового логгера
 
