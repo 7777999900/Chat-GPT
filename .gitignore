@@ -1,0 +1,25 @@
+# Виртуальное окружение
+venv/
+env/
+.env
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Логи
+*.log
+logs/
+
+# Данные
+data/
+user_settings.json
+user_contexts.json
+model_performance.json
+*.bak
+*.tmp
+
+# Системные файлы
+.DS_Store
+Thumbs.db
