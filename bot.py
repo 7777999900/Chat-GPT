@@ -40,17 +40,18 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.methods import GetUpdates
 
 # Версия бота
-BOT_VERSION = "1.3.0"
+BOT_VERSION = "1.3.1"
 
-# Получаем порт из переменной окружения или используем 8080 по умолчанию
-PORT = int(os.environ.get("PORT", 8080))
+# Получаем порт из переменной окружения или используем 10000 по умолчанию (требование Render)
+PORT = int(os.environ.get("PORT", 10000))
 APP_URL = os.environ.get("APP_URL", "")
 
 # Конфигурация путей для хранения данных на Render
-# На бесплатном плане можно писать только в /tmp (временное хранилище) 
-# или в директорию проекта /opt/render/project/src/
+# На бесплатном плане Render /tmp не сохраняется между перезапусками,
+# поэтому всегда используем директорию проекта /opt/render/project/src/
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = "/tmp" if os.path.exists("/opt/render") else os.path.join(BASE_DIR, "data")
+# Всегда используем директорию проекта для хранения данных
+DATA_DIR = os.path.join(BASE_DIR, "data") 
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Настройка логирования с учетом ограничений Render
