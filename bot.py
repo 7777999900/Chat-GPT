@@ -40,7 +40,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.methods import GetUpdates
 
 # Версия бота
-BOT_VERSION = "1.2.0"
+BOT_VERSION = "1.3.0"
 
 # Получаем порт из переменной окружения или используем 8080 по умолчанию
 PORT = int(os.environ.get("PORT", 8080))
@@ -77,34 +77,68 @@ CONFIG = {
     "API_KEY": os.environ.get("AI_API_KEY", "io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6ImJlMjYwYjFhLWI0OWMtNDU2MC04ODZiLTMwYTBmMGFlNGZlNSIsImV4cCI6NDg5OTUwNzg0MH0.Z46h1WZ-2jsXyg43r2M0okgeLoSEzrq-ULHRMS-EW6r3ccxYkXTZ5mNJO5Aw1qBAkRI5NX9t8zXc1sbUxt8WzA"),
     "DEFAULT_SYSTEM_PROMPT": "Вы - полезный AI-ассистент с энциклопедическими знаниями. Предоставляйте точные и информативные ответы. Вы обладаете обширными знаниями о различных исторических личностях, включая писателей, ученых и философов, таких как Пушкин, Толстой, Гоголь, Эйнштейн, Тесла, Ньютон, Сократ, и многих других. Для технических вопросов и примеров кода используйте Markdown-форматирование.",
     "MAX_MESSAGE_LENGTH": 4096,
-    "MAX_CONTEXT_LENGTH": 20,  # Количество сообщений в истории
+    "MAX_CONTEXT_LENGTH": 50,  # Увеличено количество сообщений в истории
     "TEMPERATURE": 0.3,  # Уровень креативности (ниже = более предсказуемо)
-    "MAX_TOKENS": 4000,  # Максимальная длина ответа
+    "MAX_TOKENS": 8000,  # Увеличено макс. количество токенов для длинных ответов
     "RETRY_ATTEMPTS": 5,  # Количество попыток при ошибке
     "ADMIN_IDS": [12345678],  # ID администраторов
     "ALLOWED_FORMATS": ["jpg", "jpeg", "png", "webp"],  # Поддерживаемые форматы изображений
-    "MAX_FILE_SIZE": 10 * 1024 * 1024,  # Максимальный размер файла (10 МБ)
+    "MAX_FILE_SIZE": 20 * 1024 * 1024,  # Увеличен максимальный размер файла (20 МБ)
     "CACHE_TIMEOUT": 3600,  # Время жизни кэша в секундах (1 час)
     "FALLBACK_MODE": True,  # Автоматически переключаться на другие модели при ошибке
     "PERSISTENT_STORAGE": DATA_DIR,  # Директория для хранения данных (адаптировано для Render)
     "CONTEXT_DECAY": 0.9,  # Коэффициент важности старых сообщений в контексте (1.0 = все сообщения равнозначны)
-    "REQUEST_TIMEOUT": 60,  # Таймаут запросов к API
+    "REQUEST_TIMEOUT": 120,  # Увеличен таймаут запросов к API для длинных ответов
     "USE_WEBHOOK": True if APP_URL else False,  # Использовать webhook вместо polling если указан APP_URL
     "MAX_INLINE_KEYBOARDS": 5,  # Максимальное количество кнопок в ряду для inline клавиатуры
     "STATS_API_KEY": os.environ.get("STATS_API_KEY", "statskey"),  # Ключ для доступа к API статистики
-    "MAX_DAILY_REQUESTS": 25,  # Максимальное количество запросов в день на бесплатном плане
+    "MAX_DAILY_REQUESTS": 40,  # Увеличено максимальное количество запросов в день на бесплатном плане
     "PREMIUM_USER_IDS": [],  # ID премиум пользователей с неограниченным доступом
     "LOG_ROTATION_SIZE": 10 * 1024 * 1024,  # Размер файла лога перед ротацией (10 МБ)
     "LOG_BACKUPS_COUNT": 5,  # Количество файлов ротации для хранения
     "HEALTH_CHECK_INTERVAL": 3600,  # Интервал проверки работоспособности в секундах
-    "USER_TIMEOUT_SECONDS": 120,  # Таймаут ожидания ответа пользователя в секундах
+    "USER_TIMEOUT_SECONDS": 300,  # Увеличен таймаут ожидания ответа пользователя в секундах
     "RATE_LIMIT_WINDOW": 60,  # Окно для ограничения частоты запросов (в секундах)
-    "RATE_LIMIT_MAX_REQUESTS": 10,  # Максимальное количество запросов за окно времени
+    "RATE_LIMIT_MAX_REQUESTS": 15,  # Увеличено максимальное количество запросов за окно времени
     "BACKUP_INTERVAL": 3600,  # Интервал резервного копирования в секундах
     "MAINTENANCE_MODE": False,  # Режим технического обслуживания
     "WEBHOOK_SECRET_TOKEN": os.environ.get("WEBHOOK_SECRET", ""),  # Секретный токен для защиты вебхука
     "DEBUG_MODE": os.environ.get("DEBUG_MODE", "0") == "1",  # Режим отладки
+    "ENABLE_THINKING_ANIMATION": True,  # Имитация "AI думает"
+    "ENABLE_SPAM_PROTECTION": True,  # Защита от спама и рекламы
+    "STREAM_RESPONSES": True,  # Потоковая отправка ответов для длинных сообщений
+    "THINKING_MESSAGES": [
+        "💭 AI анализирует ваш вопрос...",
+        "🔍 AI обрабатывает информацию...",
+        "🧠 AI формулирует ответ...",
+        "⏳ AI подбирает наилучший ответ...",
+        "📚 AI изучает материалы по теме...",
+        "🔄 AI работает над вашим запросом..."
+    ],
 }
+
+# Патерны для фильтрации спама и рекламы
+SPAM_PATTERNS = [
+    r"(?i)заработ[а-я]+ деньги",
+    r"(?i)инвестиц[а-я]+ в крипт[а-я]+",
+    r"(?i)получ[а-я]+ доход",
+    r"(?i)пассивн[а-я]+ доход",
+    r"(?i)зараб[а-я]+ без вложен[а-я]+",
+    r"(?i)обуч[а-я]+ трейд[а-я]+",
+    r"(?i)присоедин[а-я]+ к бот[а-я]+",
+    r"(?i)приглаш[а-я]+ в чат",
+    r"(?i)реклам[а-я]+ пост",
+    r"(?i)розыгрыш приз[а-я]+",
+    r"(?i)бесплатн[а-я]+ курс",
+    r"(?i)переход[а-я]+ по ссылк[а-я]+",
+    r"(?i)админ[а-я]+ бот[а-я]+",
+    r"(?i)telegram-канал",
+    r"(?i)заходи[а-я]+ в бот[а-я]+",
+    r"(?i)(t\.me|telegram\.me)\/[a-zA-Z0-9_]+",
+    r"(?i)подпис[а-я]+ на канал",
+    r"(?i)подзаработ[а-я]+",
+    r"(?i)быстр[а-я]+ деньг[а-я]+",
+]
 
 # Сведения об исторических личностях
 HISTORICAL_FIGURES = {
@@ -274,6 +308,9 @@ HISTORICAL_PATTERN = r"(?i)(?:кто (?:так(ой|ая|ое|ие)|был|яв�
 # Словарь для хранения статистики запросов по пользователям и ограничения частоты запросов
 rate_limits = {}
 
+# Словарь для хранения временных сообщений "AI пишет..."
+thinking_messages = {}
+
 # Настройка логирования с защитой от ошибок файловой системы и ротацией
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO if not CONFIG["DEBUG_MODE"] else logging.DEBUG)
@@ -333,6 +370,7 @@ class UserStates(StatesGroup):
     waiting_for_admin_broadcast = State()  # Ожидание сообщения для рассылки от админа
     waiting_for_premium_code = State()  # Ожидание ввода премиум-кода
     waiting_for_file_processing = State()  # Ожидание выбора типа обработки файла
+    waiting_for_spam_pattern = State()  # Ожидание ввода нового паттерна спама
 
 # Кэш и переменные для моделей
 model_cache = {}  # Кэш ответов моделей
@@ -344,6 +382,7 @@ request_stats = {}  # Статистика запросов
 user_files = {}  # Временное хранилище файлов пользователей
 premium_codes = set()  # Набор действительных премиум-кодов
 user_states = {}  # Хранение информации о состоянии пользователей между командами
+blocked_users = set()  # Множество заблокированных пользователей для спама
 
 # Создаем словарь для хранения пользовательских сессий и состояний обработки
 user_sessions = {}  
@@ -363,6 +402,8 @@ class BotMetrics:
         self.models_usage = {}
         self.topics_usage = {}
         self.daily_stats = {}
+        self.spam_blocked = 0
+        self.complex_queries = 0  # Счетчик сложных запросов
         self.lock = asyncio.Lock()
         
         # Загружаем сохраненные метрики, если они есть
@@ -373,10 +414,10 @@ class BotMetrics:
     
     async def initialize(self):
         """Асинхронная инициализация - запускается после запуска event loop"""
-        await self._periodic_save()
+        asyncio.create_task(self._periodic_save())
     
     async def record_request(self, user_id: int, success: bool, response_time: float, model: str = None, 
-                           topic: str = None, error: str = None):
+                           topic: str = None, error: str = None, is_complex: bool = False):
         """Записывает информацию о запросе."""
         async with self.lock:
             self.requests_total += 1
@@ -393,6 +434,9 @@ class BotMetrics:
             
             self.active_users.add(user_id)
             
+            if is_complex:
+                self.complex_queries += 1
+                
             if model:
                 self.models_usage[model] = self.models_usage.get(model, 0) + 1
                 
@@ -408,7 +452,9 @@ class BotMetrics:
                     "failed": 0,
                     "unique_users": set(),
                     "models": {},
-                    "topics": {}
+                    "topics": {},
+                    "spam_blocked": 0,
+                    "complex_queries": 0
                 }
             
             daily = self.daily_stats[today]
@@ -421,11 +467,22 @@ class BotMetrics:
                 
             daily["unique_users"].add(user_id)
             
+            if is_complex:
+                daily["complex_queries"] = daily.get("complex_queries", 0) + 1
+                
             if model:
                 daily["models"][model] = daily["models"].get(model, 0) + 1
                 
             if topic:
                 daily["topics"][topic] = daily["topics"].get(topic, 0) + 1
+    
+    def record_spam_block(self):
+        """Учитывает блокировку спама."""
+        self.spam_blocked += 1
+        
+        today = date.today().isoformat()
+        if today in self.daily_stats:
+            self.daily_stats[today]["spam_blocked"] = self.daily_stats[today].get("spam_blocked", 0) + 1
     
     def get_stats(self) -> dict:
         """Возвращает текущую статистику бота."""
@@ -441,7 +498,9 @@ class BotMetrics:
                 "failed": stats["failed"],
                 "unique_users": len(stats["unique_users"]),
                 "models": stats["models"],
-                "topics": stats["topics"]
+                "topics": stats["topics"],
+                "spam_blocked": stats.get("spam_blocked", 0),
+                "complex_queries": stats.get("complex_queries", 0)
             }
         
         return {
@@ -471,6 +530,8 @@ class BotMetrics:
                 k: v for k, v in sorted(self.errors.items(), key=lambda x: x[1], reverse=True)[:5]
             },
             "daily_stats": daily_stats_json,
+            "spam_blocked": self.spam_blocked,
+            "complex_queries": self.complex_queries,
             "timestamp": datetime.now().isoformat(),
             "version": BOT_VERSION
         }
@@ -489,6 +550,8 @@ class BotMetrics:
                     self.errors = data.get("top_errors", {})
                     self.models_usage = data.get("models", {})
                     self.topics_usage = data.get("topics", {})
+                    self.spam_blocked = data.get("spam_blocked", 0)
+                    self.complex_queries = data.get("complex_queries", 0)
                     
                     # Загружаем дневную статистику
                     daily_stats = data.get("daily_stats", {})
@@ -499,7 +562,9 @@ class BotMetrics:
                             "failed": stats.get("failed", 0),
                             "unique_users": set(),
                             "models": stats.get("models", {}),
-                            "topics": stats.get("topics", {})
+                            "topics": stats.get("topics", {}),
+                            "spam_blocked": stats.get("spam_blocked", 0),
+                            "complex_queries": stats.get("complex_queries", 0)
                         }
                         
                         # Уникальных пользователей загрузить не можем (они были преобразованы в count)
@@ -658,6 +723,59 @@ def rate_limit(func):
         return await func(message, *args, **kwargs)
     return wrapper
 
+def spam_filter(func):
+    """Декоратор для фильтрации спама и рекламы."""
+    @wraps(func)
+    async def wrapper(message: Message, *args, **kwargs):
+        if not CONFIG["ENABLE_SPAM_PROTECTION"]:
+            return await func(message, *args, **kwargs)
+            
+        user_id = message.from_user.id
+        
+        # Администраторы не подпадают под фильтр спама
+        if user_id in CONFIG["ADMIN_IDS"]:
+            return await func(message, *args, **kwargs)
+            
+        # Проверяем наличие сообщения
+        if message.text:
+            # Проверяем текст сообщения на наличие спам-паттернов
+            for pattern in SPAM_PATTERNS:
+                if re.search(pattern, message.text):
+                    # Блокируем спам
+                    bot_metrics.record_spam_block()
+                    
+                    # Добавляем пользователя в список потенциальных спамеров
+                    blocked_users.add(user_id)
+                    
+                    # Логируем инцидент
+                    logger.warning(f"Заблокирован спам от пользователя {user_id}: {message.text[:100]}...")
+                    
+                    # Уведомляем пользователя
+                    await message.answer(
+                        "⛔ Ваше сообщение было определено как потенциальный спам или реклама и не было обработано. "
+                        "Пожалуйста, не отправляйте рекламные материалы или ссылки на сторонние ресурсы."
+                    )
+                    
+                    # Уведомляем администраторов о спаме
+                    for admin_id in CONFIG["ADMIN_IDS"]:
+                        try:
+                            await bot.send_message(
+                                admin_id,
+                                f"🚫 **Обнаружен спам**\n\n"
+                                f"**Пользователь**: `{user_id}`\n"
+                                f"**Паттерн**: `{pattern}`\n\n"
+                                f"**Текст**:\n```\n{message.text[:300]}...\n```",
+                                parse_mode=ParseMode.MARKDOWN
+                            )
+                        except Exception as e:
+                            logger.error(f"Не удалось отправить уведомление о спаме администратору {admin_id}: {e}")
+                    
+                    return
+        
+        # Если сообщение прошло проверку, выполняем обработчик
+        return await func(message, *args, **kwargs)
+    return wrapper
+
 # Декоратор для сохранения контекста при исключениях
 def safe_execution(f):
     @wraps(f)
@@ -668,6 +786,7 @@ def safe_execution(f):
         error_message = None
         model = None
         topic = None
+        is_complex = False
         
         # Пытаемся извлечь user_id из аргументов
         for arg in args:
@@ -676,6 +795,8 @@ def safe_execution(f):
                 # Пытаемся определить тему, если есть текст сообщения
                 if arg.text:
                     topic = detect_question_topic(arg.text)
+                    # Определяем сложность запроса по длине текста
+                    is_complex = len(arg.text) > 300
                 break
             elif isinstance(arg, CallbackQuery) and arg.from_user:
                 user_id = arg.from_user.id
@@ -704,6 +825,17 @@ def safe_execution(f):
             # Логируем ошибку с полным контекстом
             logger.error(f"Ошибка в {f.__name__}: {str(e)}\n{traceback.format_exc()}")
             
+            # Удаляем сообщение "AI пишет..." если оно есть
+            if user_id in thinking_messages and thinking_messages[user_id]:
+                try:
+                    await bot.delete_message(
+                        chat_id=thinking_messages[user_id]["chat_id"],
+                        message_id=thinking_messages[user_id]["message_id"]
+                    )
+                    thinking_messages[user_id] = None
+                except Exception:
+                    pass
+            
             # Если среди аргументов есть сообщение, отправляем уведомление
             for arg in args:
                 if isinstance(arg, Message):
@@ -717,7 +849,10 @@ def safe_execution(f):
             # Записываем метрики
             if user_id:
                 execution_time = time.time() - start_time
-                await bot_metrics.record_request(user_id, success, execution_time, model, topic, error_message)
+                await bot_metrics.record_request(
+                    user_id, success, execution_time, model, topic, 
+                    error_message, is_complex=is_complex
+                )
     return wrapped
 
 # Функции-помощники
@@ -1029,8 +1164,30 @@ def load_user_settings():
             user_settings[user_id]["auto_translate"] = False
         if "interface_mode" not in settings:
             user_settings[user_id]["interface_mode"] = "standard"  # standard/advanced
+        if "stream_mode" not in settings:
+            user_settings[user_id]["stream_mode"] = CONFIG["STREAM_RESPONSES"] # Потоковый режим ответов
 
     save_user_settings()
+
+def load_blocked_users():
+    """Загружает список заблокированных пользователей."""
+    global blocked_users
+    blocked_data = load_data_from_json('blocked_users.json', {"users": []})
+    blocked_users = set(blocked_data.get("users", []))
+
+def save_blocked_users():
+    """Сохраняет список заблокированных пользователей."""
+    save_data_to_json({"users": list(blocked_users)}, 'blocked_users.json', version=1)
+
+def save_spam_patterns():
+    """Сохраняет список паттернов спама."""
+    save_data_to_json({"patterns": SPAM_PATTERNS}, 'spam_patterns.json', version=1)
+
+def load_spam_patterns():
+    """Загружает список паттернов спама."""
+    global SPAM_PATTERNS
+    patterns_data = load_data_from_json('spam_patterns.json', {"patterns": SPAM_PATTERNS})
+    SPAM_PATTERNS = patterns_data.get("patterns", SPAM_PATTERNS)
 
 def save_user_contexts():
     """Сохраняет контексты пользователей в JSON-файл."""
@@ -1141,7 +1298,8 @@ def activate_premium(user_id: int, duration_days: int = 30) -> bool:
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
     
     try:
@@ -1184,6 +1342,52 @@ def match_query_with_historical_figure(query: str) -> Optional[Tuple[str, dict]]
     
     return None
 
+async def send_thinking_animation(chat_id: int) -> Optional[int]:
+    """Отправляет сообщение "AI пишет..." и возвращает его ID."""
+    if not CONFIG["ENABLE_THINKING_ANIMATION"]:
+        return None
+        
+    try:
+        # Выбираем случайное сообщение о размышлении
+        thinking_text = random.choice(CONFIG["THINKING_MESSAGES"])
+        
+        # Отправляем сообщение
+        message = await bot.send_message(chat_id, thinking_text)
+        
+        # Сохраняем информацию о сообщении
+        thinking_messages[chat_id] = {
+            "message_id": message.message_id,
+            "chat_id": chat_id,
+            "text": thinking_text
+        }
+        
+        return message.message_id
+    except Exception as e:
+        logger.warning(f"Не удалось отправить анимацию 'AI пишет': {e}")
+        return None
+
+async def remove_thinking_animation(chat_id: int) -> bool:
+    """Удаляет сообщение "AI пишет..."."""
+    if not CONFIG["ENABLE_THINKING_ANIMATION"]:
+        return True
+        
+    if chat_id not in thinking_messages or thinking_messages[chat_id] is None:
+        return False
+        
+    try:
+        # Удаляем сообщение
+        await bot.delete_message(
+            chat_id=thinking_messages[chat_id]["chat_id"],
+            message_id=thinking_messages[chat_id]["message_id"]
+        )
+        
+        # Очищаем информацию о сообщении
+        thinking_messages[chat_id] = None
+        return True
+    except Exception as e:
+        logger.warning(f"Не удалось удалить анимацию 'AI пишет': {e}")
+        return False
+
 async def show_typing_action(chat_id: int, duration: float = 2.0):
     """Показывает индикатор набора текста с указанной продолжительностью."""
     try:
@@ -1209,7 +1413,8 @@ def get_user_model(user_id: int, message_text: str = None) -> str:
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
         save_user_settings()
     
@@ -1219,6 +1424,14 @@ def get_user_model(user_id: int, message_text: str = None) -> str:
     # Если текст сообщения не предоставлен, возвращаем базовую модель
     if not message_text:
         return base_model
+    
+    # Для длинных запросов используем наиболее мощные модели
+    if len(message_text) > 800:
+        for category_name in ["Продвинутые"]:
+            category = MODEL_CATEGORIES.get(category_name, [])
+            if category:
+                # Выбираем случайную продвинутую модель для большого запроса
+                return random.choice(category)
     
     # Проверка, относится ли запрос к исторической личности
     historical_match = match_query_with_historical_figure(message_text)
@@ -1261,6 +1474,12 @@ def get_user_temperature(user_id: int) -> float:
     if str(user_id) not in user_settings:
         return CONFIG["TEMPERATURE"]
     return user_settings[str(user_id)].get("temperature", CONFIG["TEMPERATURE"])
+
+def get_user_stream_mode(user_id: int) -> bool:
+    """Возвращает предпочтение пользователя по потоковой отправке ответов."""
+    if str(user_id) not in user_settings:
+        return CONFIG["STREAM_RESPONSES"]
+    return user_settings[str(user_id)].get("stream_mode", CONFIG["STREAM_RESPONSES"])
 
 def get_user_context(user_id: int) -> List[Dict[str, str]]:
     """Возвращает историю диалога с пользователем."""
@@ -1604,6 +1823,71 @@ async def split_and_send_message(message: Message, text: str, parse_mode: Option
     
     return last_message
 
+@safe_execution
+async def stream_and_send_response(message: Message, text: str, parse_mode: Optional[str] = ParseMode.MARKDOWN) -> Optional[Message]:
+    """Потоковый вывод сообщения: текст появляется постепенно через регулярные обновления."""
+    # Если текст короткий, отправляем его обычным способом
+    if len(text) < 200:
+        return await message.answer(text, parse_mode=parse_mode)
+    
+    # Очищаем Markdown если он используется
+    if parse_mode == ParseMode.MARKDOWN:
+        text = clean_markdown(text)
+    
+    # Разбиваем текст на токены для постепенного обновления
+    # (здесь для простоты используем пробелы, но можно использовать более сложную токенизацию)
+    tokens = []
+    if len(text) > 4000:  # Для очень длинных текстов используем более крупные чанки
+        tokens = [text[i:i+100] for i in range(0, len(text), 100)]
+    else:
+        tokens = [text[i:i+30] for i in range(0, len(text), 30)]
+    
+    if not tokens:
+        return await message.answer(text, parse_mode=parse_mode)
+    
+    # Отправляем первую часть
+    try:
+        current_message = await message.answer(tokens[0], parse_mode=parse_mode)
+    except TelegramAPIError as e:
+        logger.warning(f"Ошибка при отправке первой части: {e}")
+        return await message.answer(text, parse_mode=None)
+    
+    current_text = tokens[0]
+    
+    # Постепенно обновляем сообщение
+    for i in range(1, len(tokens)):
+        try:
+            current_text += tokens[i]
+            
+            # Обновляем каждый 2-3 токен (не каждый, чтобы не превышать лимиты API)
+            if i % 3 == 0 or i == len(tokens) - 1:
+                await current_message.edit_text(current_text, parse_mode=parse_mode)
+                # Небольшая пауза между обновлениями для эффекта печати
+                await asyncio.sleep(0.2)
+        except TelegramAPIError as e:
+            logger.warning(f"Ошибка при обновлении сообщения: {e}")
+            
+            # Если сообщение стало слишком длинным, отправляем новое
+            if "message is too long" in str(e).lower() or "message to edit not found" in str(e).lower():
+                try:
+                    # Отправляем оставшуюся часть текста
+                    rest_of_text = text[len(current_text):]
+                    if rest_of_text:
+                        current_message = await message.answer(rest_of_text, parse_mode=parse_mode)
+                        current_text = rest_of_text
+                except Exception as e2:
+                    logger.error(f"Не удалось отправить продолжение: {e2}")
+                    # Если не получилось, отправляем обычным способом
+                    return await split_and_send_message(message, text, parse_mode)
+            else:
+                # Другие ошибки - пробуем без форматирования
+                try:
+                    await current_message.edit_text(current_text, parse_mode=None)
+                except Exception:
+                    pass
+    
+    return current_message
+
 async def create_model_selection_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру для выбора модели по категориям."""
     builder = InlineKeyboardBuilder()
@@ -1625,10 +1909,7 @@ async def create_model_selection_keyboard() -> InlineKeyboardMarkup:
         )
     )
     
-    # Показываем избранные модели, если они есть
-    # У нас нет доступа к message в этой функции, поэтому убираем
-    # favorite_models = user_settings.get(str(message.from_user.id), {}).get("favorite_models", [])
-    # if favorite_models:
+    # Показываем кнопку для избранных моделей
     builder.row(
         InlineKeyboardButton(
             text="⭐ Избранные модели",
@@ -1747,6 +2028,79 @@ async def create_file_processing_keyboard() -> InlineKeyboardMarkup:
     
     return builder.as_markup()
 
+async def create_stream_mode_keyboard(current_mode: bool) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора режима отображения ответов."""
+    builder = InlineKeyboardBuilder()
+    
+    current_text = "✅ Включен" if current_mode else "❌ Выключен"
+    
+    builder.row(
+        InlineKeyboardButton(
+            text=f"Потоковый режим: {current_text}",
+            callback_data="stream_info"
+        )
+    )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="🔄 Включить потоковый режим" if not current_mode else "🔄 Выключить потоковый режим",
+            callback_data=f"toggle_stream:{not current_mode}"
+        )
+    )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад к настройкам",
+            callback_data="back_to_settings"
+        )
+    )
+    
+    return builder.as_markup()
+
+async def create_admin_spam_keyboard() -> InlineKeyboardMarkup:
+    """Создает клавиатуру для управления спам-фильтром."""
+    builder = InlineKeyboardBuilder()
+    
+    current_status = "✅ Включена" if CONFIG["ENABLE_SPAM_PROTECTION"] else "❌ Выключена"
+    
+    builder.row(
+        InlineKeyboardButton(
+            text=f"Защита от спама: {current_status}",
+            callback_data="spam_status"
+        )
+    )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="🔄 Включить защиту" if not CONFIG["ENABLE_SPAM_PROTECTION"] else "🔄 Выключить защиту",
+            callback_data=f"toggle_spam:{not CONFIG['ENABLE_SPAM_PROTECTION']}"
+        )
+    )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="➕ Добавить спам-паттерн",
+            callback_data="add_spam_pattern"
+        ),
+        InlineKeyboardButton(
+            text="🔍 Посмотреть паттерны",
+            callback_data="view_spam_patterns"
+        )
+    )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text=f"👥 Заблокировано: {len(blocked_users)}",
+            callback_data="view_blocked_users"
+        ),
+        InlineKeyboardButton(
+            text="🧹 Очистить блок-лист",
+            callback_data="clear_blocked_users"
+        )
+    )
+    
+    return builder.as_markup()
+
 @safe_execution
 @with_retry(max_retries=3, delay=1.0, backoff=2.0)
 async def get_ai_response(user_id: int, message_text: str, image_data: Optional[str] = None) -> str:
@@ -1765,11 +2119,15 @@ async def get_ai_response(user_id: int, message_text: str, image_data: Optional[
     system_prompt = get_system_prompt(user_id)
     temperature = get_user_temperature(user_id)
 
-    # Проверяем кэш для экономии запросов к API
-    cache_key = f"{model}:{message_text}:{temperature}"
-    cached_response = get_cached_response(cache_key)
-    if cached_response:
-        return cached_response
+    # Для сложных запросов не используем кэш
+    is_complex_query = len(message_text) > 300
+    
+    # Проверяем кэш для экономии запросов к API (для не сложных запросов)
+    if not is_complex_query:
+        cache_key = f"{model}:{message_text}:{temperature}"
+        cached_response = get_cached_response(cache_key)
+        if cached_response:
+            return cached_response
 
     # Получаем контекст пользователя
     context = get_user_context(user_id)
@@ -1823,8 +2181,9 @@ async def get_ai_response(user_id: int, message_text: str, image_data: Optional[
                 ai_response = data['choices'][0]['message']['content']
                 response_time = time.time() - start_time
 
-                # Кэшируем ответ
-                set_cached_response(cache_key, ai_response)
+                # Кэшируем ответ (только для не сложных запросов)
+                if not is_complex_query:
+                    set_cached_response(cache_key, ai_response)
 
                 # Добавляем ответ в контекст пользователя
                 add_to_user_context(user_id, "assistant", ai_response)
@@ -1983,18 +2342,18 @@ async def process_file(user_id: int, file_id: str, file_name: str, process_type:
                 file_content = f.read()
                 
                 # Ограничиваем размер содержимого
-                max_content_length = 10000
+                max_content_length = 20000 # Увеличено для обработки больших файлов
                 if len(file_content) > max_content_length:
                     file_content = file_content[:max_content_length] + f"\n\n[Файл обрезан, показаны первые {max_content_length} символов из {len(file_content)}]"
         
         # Формируем промпт в зависимости от типа обработки
         prompt = ""
         if process_type == "analyze_text":
-            prompt = f"Проанализируй следующий текстовый файл '{file_name}' и предоставь детальный анализ его содержимого, структуры и ключевых моментов:\n\n{file_content}"
+            prompt = f"Проанализируй следующий текстовый файл '{file_name}' и предоставь детальный анализ его содержимого, структуры и ключевых моментов. Структурируй ответ с использованием подзаголовков и маркированных списков для лучшей читаемости:\n\n{file_content}"
         elif process_type == "analyze_data":
-            prompt = f"Проанализируй данные из файла '{file_name}' и представь основные статистические показатели, закономерности и выводы:\n\n{file_content}"
+            prompt = f"Проанализируй данные из файла '{file_name}' и представь основные статистические показатели, закономерности и выводы. Приведи графический анализ в текстовом виде, если это возможно, и структурируй свой ответ по секциям:\n\n{file_content}"
         elif process_type == "extract_info":
-            prompt = f"Извлеки из файла '{file_name}' всю важную информацию, такую как даты, контакты, ключевые факты, и структурируй её в удобном формате:\n\n{file_content}"
+            prompt = f"Извлеки из файла '{file_name}' всю важную информацию, такую как даты, контакты, ключевые факты, и структурируй её в удобном формате. Организуй информацию в категории и используй таблицы или списки:\n\n{file_content}"
         else:
             return "❌ Неизвестный тип обработки файла."
         
@@ -2009,7 +2368,7 @@ async def process_file(user_id: int, file_id: str, file_name: str, process_type:
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": "Вы - эксперт по анализу и обработке данных из файлов различных форматов. Предоставляйте детальные, структурированные и точные ответы."},
+                {"role": "system", "content": "Вы - эксперт по анализу и обработке данных из файлов различных форматов. Предоставляйте детальные, структурированные и точные ответы с использованием Markdown-форматирования для улучшения читаемости."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
@@ -2205,7 +2564,8 @@ async def cmd_start(message: Message):
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
         save_user_settings()
     
@@ -2228,6 +2588,7 @@ async def cmd_help(message: Message):
         "/settings - Показать текущие настройки\n"
         "/premium - Активировать премиум-режим\n"
         "/upload - Загрузить файл для анализа\n"
+        "/stream - Включить/выключить потоковый режим ответов\n"
         "/help - Показать эту справку\n\n"
         "📝 **Форматирование:**\n"
         "Бот поддерживает Markdown для кода и текста:\n"
@@ -2240,6 +2601,8 @@ async def cmd_help(message: Message):
         "После каждого ответа вы можете оценить его качество, что помогает улучшать работу бота."
         "\n\n📄 **Работа с файлами:**\n"
         "Отправьте документ или используйте команду /upload, чтобы загрузить файл для анализа."
+        "\n\n⚡ **Потоковый режим:**\n"
+        "В потоковом режиме ответы появляются постепенно, что создает эффект печати в реальном времени."
     )
 
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
@@ -2265,7 +2628,8 @@ async def cmd_settings(message: Message):
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
         save_user_settings()
 
@@ -2273,6 +2637,7 @@ async def cmd_settings(message: Message):
     model = settings.get("model", ALL_MODELS[0])
     system_prompt = settings.get("system_prompt", CONFIG["DEFAULT_SYSTEM_PROMPT"])
     temperature = settings.get("temperature", CONFIG["TEMPERATURE"])
+    stream_mode = settings.get("stream_mode", CONFIG["STREAM_RESPONSES"])
     
     # Проверяем премиум-статус
     premium_status = "✅ Активен"
@@ -2306,6 +2671,7 @@ async def cmd_settings(message: Message):
     keyboard.row(InlineKeyboardButton(text="🔄 Сменить модель", callback_data="change_model"))
     keyboard.row(InlineKeyboardButton(text="📝 Изменить системный промпт", callback_data="change_prompt"))
     keyboard.row(InlineKeyboardButton(text="🎛️ Настроить креативность", callback_data="change_temp"))
+    keyboard.row(InlineKeyboardButton(text="⚡ Настройка потокового режима", callback_data="stream_settings"))
     keyboard.row(InlineKeyboardButton(text="🔄 Начать новый диалог", callback_data="new_chat"))
     
     if not is_premium_user(user_id):
@@ -2315,6 +2681,7 @@ async def cmd_settings(message: Message):
         "⚙️ **Текущие настройки:**\n\n"
         f"🤖 **Модель:** `{format_model_name(model)}`\n\n"
         f"🌡️ **Креативность:** `{temperature}`\n\n"
+        f"⚡ **Потоковый режим:** {'✅ Включен' if stream_mode else '❌ Выключен'}\n\n"
         f"⭐ **Премиум-статус:** {premium_status}\n\n"
         f"📝 **Системный промпт:**\n```\n{system_prompt}\n```" + requests_info
     )
@@ -2398,6 +2765,41 @@ async def cmd_temperature(message: Message, state: FSMContext):
         reply_markup=await create_temperature_keyboard()
     )
 
+@router.message(Command("stream"))
+@safe_execution
+async def cmd_stream(message: Message):
+    """Позволяет включить или выключить потоковый режим ответов."""
+    user_id = message.from_user.id
+    
+    if str(user_id) not in user_settings:
+        user_settings[str(user_id)] = {
+            "model": ALL_MODELS[0],
+            "system_prompt": CONFIG["DEFAULT_SYSTEM_PROMPT"],
+            "temperature": CONFIG["TEMPERATURE"],
+            "requests_left": CONFIG["MAX_DAILY_REQUESTS"],
+            "last_reset": str(date.today()),
+            "preferred_topics": [],
+            "favorite_models": [],
+            "last_active": str(date.today()),
+            "is_premium": False,
+            "premium_until": None,
+            "language": "ru",
+            "notifications_enabled": True,
+            "auto_translate": False,
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
+        }
+    
+    current_mode = user_settings[str(user_id)].get("stream_mode", CONFIG["STREAM_RESPONSES"])
+    
+    await message.answer(
+        "⚡ **Настройка потокового режима ответов**\n\n"
+        "В потоковом режиме ответы появляются постепенно, что создает эффект печати в реальном времени.\n\n"
+        "Эта функция особенно полезна для длинных ответов, чтобы видеть прогресс без ожидания завершения.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=await create_stream_mode_keyboard(current_mode)
+    )
+
 @router.message(Command("newchat"))
 @safe_execution
 async def cmd_new_chat(message: Message):
@@ -2469,6 +2871,18 @@ async def cmd_upload(message: Message):
         "После загрузки вы сможете выбрать тип анализа файла."
     )
 
+@router.message(Command("spamfilter"))
+@admin_only
+@safe_execution
+async def cmd_spam_filter(message: Message):
+    """Управление спам-фильтром (только для администраторов)."""
+    await message.answer(
+        "🚫 **Управление защитой от спама**\n\n"
+        "С помощью этого меню вы можете настраивать фильтрацию спама и рекламы в сообщениях пользователей.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=await create_admin_spam_keyboard()
+    )
+
 @router.callback_query(lambda c: c.data == "new_chat")
 @safe_execution
 async def callback_new_chat(callback: CallbackQuery):
@@ -2532,6 +2946,158 @@ async def callback_change_temp(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+@router.callback_query(lambda c: c.data == "stream_settings")
+@safe_execution
+async def callback_stream_settings(callback: CallbackQuery):
+    """Обработчик кнопки настройки потокового режима."""
+    user_id = callback.from_user.id
+    
+    current_mode = user_settings.get(str(user_id), {}).get("stream_mode", CONFIG["STREAM_RESPONSES"])
+    
+    await callback.message.answer(
+        "⚡ **Настройка потокового режима ответов**\n\n"
+        "В потоковом режиме ответы появляются постепенно, что создает эффект печати в реальном времени.\n\n"
+        "Эта функция особенно полезна для длинных ответов, чтобы видеть прогресс без ожидания завершения.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=await create_stream_mode_keyboard(current_mode)
+    )
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "back_to_settings")
+@safe_execution
+async def callback_back_to_settings(callback: CallbackQuery):
+    """Обработчик кнопки возврата к настройкам."""
+    await cmd_settings(callback.message)
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data.startswith("toggle_stream:"))
+@safe_execution
+async def callback_toggle_stream(callback: CallbackQuery):
+    """Обработчик переключения потокового режима."""
+    user_id = callback.from_user.id
+    new_mode = callback.data.split(":", 1)[1] == "True"
+    
+    # Обновляем настройки пользователя
+    if str(user_id) in user_settings:
+        user_settings[str(user_id)]["stream_mode"] = new_mode
+        save_user_settings()
+    
+    # Отправляем подтверждение
+    await callback.message.edit_text(
+        "⚡ **Настройка потокового режима ответов**\n\n"
+        f"Потоковый режим {'включен' if new_mode else 'выключен'}.\n\n"
+        "В потоковом режиме ответы появляются постепенно, что создает эффект печати в реальном времени.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=await create_stream_mode_keyboard(new_mode)
+    )
+    await callback.answer(f"Потоковый режим {'включен' if new_mode else 'выключен'}")
+
+@router.callback_query(lambda c: c.data == "stream_info")
+@safe_execution
+async def callback_stream_info(callback: CallbackQuery):
+    """Обработчик запроса информации о потоковом режиме."""
+    await callback.answer(
+        "В потоковом режиме текст ответа появляется постепенно, как будто его печатает человек. "
+        "Это полезно для длинных ответов, чтобы вы могли начать читать, не дожидаясь полного завершения.", 
+        show_alert=True
+    )
+
+@router.callback_query(lambda c: c.data == "spam_status")
+@admin_only
+@safe_execution
+async def callback_spam_status(callback: CallbackQuery):
+    """Обработчик запроса статуса спам-фильтра."""
+    await callback.answer(
+        f"Защита от спама {'включена' if CONFIG['ENABLE_SPAM_PROTECTION'] else 'выключена'}. "
+        f"Заблокировано попыток спама: {bot_metrics.spam_blocked}. "
+        f"В черном списке: {len(blocked_users)} пользователей.",
+        show_alert=True
+    )
+
+@router.callback_query(lambda c: c.data.startswith("toggle_spam:"))
+@admin_only
+@safe_execution
+async def callback_toggle_spam(callback: CallbackQuery):
+    """Обработчик переключения спам-фильтра."""
+    new_state = callback.data.split(":", 1)[1] == "True"
+    
+    # Обновляем настройки
+    CONFIG["ENABLE_SPAM_PROTECTION"] = new_state
+    
+    # Отправляем подтверждение
+    await callback.message.edit_text(
+        "🚫 **Управление защитой от спама**\n\n"
+        f"Защита от спама {'включена' if new_state else 'выключена'}.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=await create_admin_spam_keyboard()
+    )
+    await callback.answer(f"Защита от спама {'включена' if new_state else 'выключена'}")
+
+@router.callback_query(lambda c: c.data == "add_spam_pattern")
+@admin_only
+@safe_execution
+async def callback_add_spam_pattern(callback: CallbackQuery, state: FSMContext):
+    """Обработчик добавления нового спам-паттерна."""
+    await state.set_state(UserStates.waiting_for_spam_pattern)
+    
+    await callback.message.answer(
+        "🔍 **Добавление спам-паттерна**\n\n"
+        "Введите регулярное выражение для нового спам-паттерна.\n"
+        "Пример: `(?i)заработ[а-я]+ деньги`\n\n"
+        "Для отмены введите 'отмена'.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "view_spam_patterns")
+@admin_only
+@safe_execution
+async def callback_view_spam_patterns(callback: CallbackQuery):
+    """Обработчик просмотра спам-паттернов."""
+    patterns_text = "🔍 **Текущие спам-паттерны:**\n\n"
+    
+    for i, pattern in enumerate(SPAM_PATTERNS, 1):
+        patterns_text += f"{i}. `{pattern}`\n"
+    
+    # Если список слишком длинный, разбиваем на части
+    if len(patterns_text) > 4000:
+        parts = [patterns_text[i:i+4000] for i in range(0, len(patterns_text), 4000)]
+        for part in parts:
+            await callback.message.answer(part, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await callback.message.answer(patterns_text, parse_mode=ParseMode.MARKDOWN)
+    
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "view_blocked_users")
+@admin_only
+@safe_execution
+async def callback_view_blocked_users(callback: CallbackQuery):
+    """Обработчик просмотра заблокированных пользователей."""
+    if not blocked_users:
+        await callback.message.answer("👥 Список заблокированных пользователей пуст.")
+        await callback.answer()
+        return
+    
+    users_text = "👥 **Заблокированные пользователи:**\n\n"
+    for i, user_id in enumerate(blocked_users, 1):
+        users_text += f"{i}. `{user_id}`\n"
+    
+    await callback.message.answer(users_text, parse_mode=ParseMode.MARKDOWN)
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "clear_blocked_users")
+@admin_only
+@safe_execution
+async def callback_clear_blocked_users(callback: CallbackQuery):
+    """Обработчик очистки списка заблокированных пользователей."""
+    global blocked_users
+    blocked_users.clear()
+    save_blocked_users()
+    
+    await callback.message.answer("🧹 Список заблокированных пользователей очищен.")
+    await callback.answer()
+
 @router.callback_query(lambda c: c.data == "activate_premium")
 @safe_execution
 async def callback_activate_premium(callback: CallbackQuery, state: FSMContext):
@@ -2584,6 +3150,18 @@ async def callback_favorite_models(callback: CallbackQuery):
     """Обработчик кнопки "Избранные модели"."""
     user_id = callback.from_user.id
     
+    # Проверяем, есть ли у пользователя избранные модели
+    favorite_models = user_settings.get(str(user_id), {}).get("favorite_models", [])
+    
+    if not favorite_models:
+        await callback.answer("У вас пока нет избранных моделей. Выберите модель для добавления в избранное.")
+        # Возвращаемся к категориям
+        await callback.message.edit_text(
+            "📚 Выберите категорию моделей:",
+            reply_markup=await create_model_selection_keyboard()
+        )
+        return
+    
     await callback.message.edit_text(
         "⭐ Выберите одну из ваших избранных моделей:",
         reply_markup=await create_favorite_models_keyboard(user_id)
@@ -2635,15 +3213,64 @@ async def callback_file_processing(callback: CallbackQuery, state: FSMContext):
         f"Пожалуйста, подождите, это может занять некоторое время."
     )
     
+    # Отправляем сообщение "AI думает..."
+    await send_thinking_animation(callback.message.chat.id)
+    
     # Обрабатываем файл
     result = await process_file(user_id, file_id, file_name, process_type)
     
+    # Удаляем сообщение "AI думает..."
+    await remove_thinking_animation(callback.message.chat.id)
+    
+    # Определяем, нужно ли использовать потоковый режим для ответа
+    use_stream = get_user_stream_mode(user_id) and len(result) > 500
+    
     # Отправляем результат обработки
-    await split_and_send_message(callback.message, result)
+    if use_stream:
+        await stream_and_send_response(callback.message, result)
+    else:
+        await split_and_send_message(callback.message, result)
     
     # Очищаем состояние
     await state.clear()
     await callback.answer()
+
+@router.message(StateFilter(UserStates.waiting_for_spam_pattern))
+@admin_only
+@safe_execution
+async def process_spam_pattern(message: Message, state: FSMContext):
+    """Обрабатывает ввод нового спам-паттерна."""
+    pattern = message.text.strip()
+    
+    # Проверка на отмену
+    if pattern.lower() in ['отмена', 'cancel', 'отмен', 'стоп', 'stop']:
+        await state.clear()
+        await message.answer("❌ Добавление спам-паттерна отменено.")
+        return
+    
+    try:
+        # Проверяем валидность регулярного выражения
+        re.compile(pattern)
+        
+        # Добавляем паттерн в список
+        SPAM_PATTERNS.append(pattern)
+        
+        # Сохраняем обновленные паттерны
+        save_spam_patterns()
+        
+        await message.answer(
+            f"✅ Спам-паттерн успешно добавлен:\n\n`{pattern}`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Возвращаемся к нормальному состоянию
+        await state.clear()
+    except re.error as e:
+        # Если регулярное выражение некорректно
+        await message.answer(
+            f"❌ Некорректное регулярное выражение: {str(e)}\n\n"
+            "Пожалуйста, проверьте синтаксис и попробуйте снова, или напишите 'отмена' для выхода."
+        )
 
 @router.message(StateFilter(UserStates.waiting_for_direct_model))
 @safe_execution
@@ -2683,7 +3310,8 @@ async def process_direct_model(message: Message, state: FSMContext):
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
     
     # Сохраняем предыдущую модель
@@ -2779,7 +3407,8 @@ async def callback_select_model(callback: CallbackQuery, state: FSMContext):
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
 
     user_settings[str(user_id)]["model"] = model
@@ -2828,7 +3457,8 @@ async def callback_select_temperature(callback: CallbackQuery, state: FSMContext
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
 
     user_settings[str(user_id)]["temperature"] = temperature
@@ -2893,6 +3523,9 @@ async def callback_rephrase(callback: CallbackQuery):
     # Показываем, что бот "печатает"
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
     
+    # Показываем сообщение "AI думает..."
+    thinking_msg_id = await send_thinking_animation(callback.message.chat.id)
+    
     # Получаем перефразированный ответ
     new_answer = await rephrase_answer(
         user_id,
@@ -2900,8 +3533,18 @@ async def callback_rephrase(callback: CallbackQuery):
         "Перефразируй этот ответ другими словами, сохраняя то же содержание, но выражая его иначе"
     )
     
+    # Удаляем сообщение "AI думает..."
+    if thinking_msg_id:
+        await remove_thinking_animation(callback.message.chat.id)
+    
+    # Определяем, нужно ли использовать потоковый режим для ответа
+    use_stream = get_user_stream_mode(user_id) and len(new_answer) > 500
+    
     # Отправляем новый ответ с кнопками обратной связи
-    sent_message = await split_and_send_message(callback.message, new_answer)
+    if use_stream:
+        sent_message = await stream_and_send_response(callback.message, new_answer)
+    else:
+        sent_message = await split_and_send_message(callback.message, new_answer)
     
     # Добавляем кнопки обратной связи к последнему сообщению
     if sent_message:
@@ -2932,6 +3575,9 @@ async def callback_elaborate(callback: CallbackQuery):
     # Показываем, что бот "печатает"
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
     
+    # Показываем сообщение "AI думает..."
+    thinking_msg_id = await send_thinking_animation(callback.message.chat.id)
+    
     # Получаем более подробный ответ
     new_answer = await rephrase_answer(
         user_id,
@@ -2939,8 +3585,18 @@ async def callback_elaborate(callback: CallbackQuery):
         "Расширь этот ответ, добавив больше подробностей, примеров и объяснений. Сделай ответ более полным и информативным."
     )
     
+    # Удаляем сообщение "AI думает..."
+    if thinking_msg_id:
+        await remove_thinking_animation(callback.message.chat.id)
+    
+    # Определяем, нужно ли использовать потоковый режим для ответа
+    use_stream = get_user_stream_mode(user_id) and len(new_answer) > 500
+    
     # Отправляем новый ответ с кнопками обратной связи
-    sent_message = await split_and_send_message(callback.message, new_answer)
+    if use_stream:
+        sent_message = await stream_and_send_response(callback.message, new_answer)
+    else:
+        sent_message = await split_and_send_message(callback.message, new_answer)
     
     # Добавляем кнопки обратной связи к последнему сообщению
     if sent_message:
@@ -2985,7 +3641,8 @@ async def process_custom_prompt(message: Message, state: FSMContext):
             "language": "ru",
             "notifications_enabled": True,
             "auto_translate": False,
-            "interface_mode": "standard"
+            "interface_mode": "standard",
+            "stream_mode": CONFIG["STREAM_RESPONSES"]
         }
 
     user_settings[str(user_id)]["system_prompt"] = new_prompt
@@ -3054,12 +3711,26 @@ async def process_image_caption(message: Message, state: FSMContext):
     # Показываем, что бот "печатает"
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
     
+    # Показываем сообщение "AI думает..."
+    thinking_msg_id = await send_thinking_animation(message.chat.id)
+    
     # Получаем ответ от AI
     ai_response = await get_ai_response(user_id, caption, image_data)
     
+    # Удаляем сообщение "AI думает..."
+    if thinking_msg_id:
+        await remove_thinking_animation(message.chat.id)
+    
     # Отправляем ответ
     ai_response = clean_markdown(ai_response)
-    sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
+    
+    # Определяем, нужно ли использовать потоковый режим для ответа
+    use_stream = get_user_stream_mode(user_id) and len(ai_response) > 500
+    
+    if use_stream:
+        sent_message = await stream_and_send_response(message, ai_response)
+    else:
+        sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
     
     # Добавляем кнопки обратной связи
     feedback_id = str(uuid.uuid4())
@@ -3201,6 +3872,7 @@ async def handle_upload_button(message: Message):
 
 @router.message(F.document)
 @safe_execution
+@spam_filter
 async def handle_document(message: Message, state: FSMContext):
     """Обрабатывает загрузку документа."""
     user_id = message.from_user.id
@@ -3253,6 +3925,7 @@ async def handle_document(message: Message, state: FSMContext):
 
 @router.message(F.photo)
 @safe_execution
+@spam_filter
 async def handle_photo(message: Message, state: FSMContext):
     """Обрабатывает сообщения с фотографиями."""
     user_id = message.from_user.id
@@ -3333,7 +4006,8 @@ async def handle_photo(message: Message, state: FSMContext):
                     "language": "ru",
                     "notifications_enabled": True,
                     "auto_translate": False,
-                    "interface_mode": "standard"
+                    "interface_mode": "standard",
+                    "stream_mode": CONFIG["STREAM_RESPONSES"]
                 }
 
             # Запоминаем предыдущую модель
@@ -3357,11 +4031,18 @@ async def handle_photo(message: Message, state: FSMContext):
 
     # Показываем индикатор обработки
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
+    
+    # Показываем сообщение "AI думает..."
+    thinking_msg_id = await send_thinking_animation(message.chat.id)
 
     # Обрабатываем изображение
     image_data = await process_image(photo)
 
     if not image_data:
+        # Удаляем сообщение "AI думает..."
+        if thinking_msg_id:
+            await remove_thinking_animation(message.chat.id)
+            
         await message.answer(
             "❌ Не удалось обработать изображение. Убедитесь, что оно в формате JPG, JPEG, PNG или WEBP "
             "и его размер не превышает 10 МБ."
@@ -3372,6 +4053,10 @@ async def handle_photo(message: Message, state: FSMContext):
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
     ai_response = await get_ai_response(user_id, caption, image_data)
 
+    # Удаляем сообщение "AI думает..."
+    if thinking_msg_id:
+        await remove_thinking_animation(message.chat.id)
+
     # Если временно переключили модель, возвращаемся к предыдущей
     if not supports_vision and str(user_id) in user_settings and "previous_model" in user_settings[str(user_id)]:
         previous_model = user_settings[str(user_id)]["previous_model"]
@@ -3381,7 +4066,14 @@ async def handle_photo(message: Message, state: FSMContext):
 
         # Отправляем ответ
         ai_response = clean_markdown(ai_response)
-        sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
+        
+        # Определяем, нужно ли использовать потоковый режим для ответа
+        use_stream = get_user_stream_mode(user_id) and len(ai_response) > 500
+        
+        if use_stream:
+            sent_message = await stream_and_send_response(message, ai_response)
+        else:
+            sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
         
         # Добавляем кнопки обратной связи
         feedback_id = str(uuid.uuid4())
@@ -3397,7 +4089,14 @@ async def handle_photo(message: Message, state: FSMContext):
     else:
         # Отправляем ответ
         ai_response = clean_markdown(ai_response)
-        sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
+        
+        # Определяем, нужно ли использовать потоковый режим для ответа
+        use_stream = get_user_stream_mode(user_id) and len(ai_response) > 500
+        
+        if use_stream:
+            sent_message = await stream_and_send_response(message, ai_response)
+        else:
+            sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
         
         # Добавляем кнопки обратной связи
         feedback_id = str(uuid.uuid4())
@@ -3448,14 +4147,18 @@ async def cmd_stats(message: Message):
     stats = bot_metrics.get_stats()
     
     stats_text = (
-        f"📊 **Статистика бота**\n\n"
+        f"📊 **Статистика бота (v{BOT_VERSION})**\n\n"
         f"⏱️ **Время работы**: {stats['uptime_formatted']}\n"
         f"👥 **Активных пользователей**: {stats['users']['active_count']}\n\n"
         f"🔢 **Запросы**:\n"
         f"- Всего: {stats['requests']['total']}\n"
         f"- Успешных: {stats['requests']['success']}\n"
         f"- Неудачных: {stats['requests']['failed']}\n"
-        f"- Процент успеха: {stats['requests']['success_rate']:.1f}%\n\n"
+        f"- Процент успеха: {stats['requests']['success_rate']:.1f}%\n"
+        f"- Сложных запросов: {stats['complex_queries']}\n\n"
+        f"🚫 **Спам-фильтр**:\n"
+        f"- Заблокировано сообщений: {stats['spam_blocked']}\n"
+        f"- Блок-лист пользователей: {len(blocked_users)}\n\n"
         f"⏱️ **Время ответа**:\n"
         f"- Среднее: {stats['response_time']['average_ms']:.0f} мс\n"
         f"- Минимальное: {stats['response_time']['min_ms']:.0f} мс\n"
@@ -3529,6 +4232,7 @@ async def cmd_maintenance(message: Message):
 @router.message()
 @safe_execution
 @rate_limit
+@spam_filter
 async def handle_message(message: Message, state: FSMContext):
     """Обрабатывает все остальные текстовые сообщения."""
     # Проверяем режим обслуживания
@@ -3572,7 +4276,8 @@ async def handle_message(message: Message, state: FSMContext):
                 "language": "ru",
                 "notifications_enabled": True,
                 "auto_translate": False,
-                "interface_mode": "standard"
+                "interface_mode": "standard",
+                "stream_mode": CONFIG["STREAM_RESPONSES"]
             }
             save_user_settings()
         elif user_settings[str(user_id)].get("last_reset") != today:
@@ -3600,6 +4305,9 @@ async def handle_message(message: Message, state: FSMContext):
 
     # Показываем, что бот "печатает"
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
+    
+    # Показываем сообщение "AI думает..."
+    thinking_msg_id = await send_thinking_animation(message.chat.id)
 
     # Определяем тему вопроса для возможного выбора специализированной модели
     topic = detect_question_topic(message.text)
@@ -3611,15 +4319,26 @@ async def handle_message(message: Message, state: FSMContext):
     ai_response = await get_ai_response(user_id, message.text)
     response_time = time.time() - start_time
     
+    # Удаляем сообщение "AI думает..."
+    if thinking_msg_id:
+        await remove_thinking_animation(message.chat.id)
+        
     logger.info(f"Получен ответ за {response_time:.2f} секунд")
 
+    # Определяем, нужно ли использовать потоковый режим для ответа
+    use_stream = get_user_stream_mode(user_id) and len(ai_response) > 500
+    
     # Отправляем ответ с разбивкой на части при необходимости
     try:
         # Очищаем Markdown перед отправкой
         ai_response = clean_markdown(ai_response)
         
-        # Отправляем сообщение
-        sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
+        # Отправляем сообщение в зависимости от режима
+        if use_stream:
+            sent_message = await stream_and_send_response(message, ai_response)
+        else:
+            # Отправляем сообщение обычным способом
+            sent_message = await message.answer(ai_response, parse_mode=ParseMode.MARKDOWN)
         
         # Добавляем кнопки обратной связи
         feedback_id = str(uuid.uuid4())
@@ -3836,6 +4555,8 @@ async def main():
     load_user_contexts()
     load_model_performance()
     load_premium_codes()
+    load_blocked_users()
+    load_spam_patterns()
     
     # Проверяем успешность запуска
     startup_success = await verify_bot_startup()
