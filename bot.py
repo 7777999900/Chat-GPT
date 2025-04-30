@@ -74,7 +74,7 @@ os.makedirs(STATS_DIR, exist_ok=True)
 CONFIG = {
     "API_URL": "https://api.intelligence.io.solutions/api/v1",
     "TOKEN": os.environ.get("TELEGRAM_TOKEN", "7839597384:AAFlm4v3qcudhJfiFfshz1HW6xpKhtqlV5g"),
-    "API_KEY": os.environ.get("AI_API_KEY", "io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6ImJlMjYwYjFhLWI0OWMtNDU2MC04ODZiLTMwYTBmMGFlNGZlNSIsImV4cCI6NDg5OTUwNzg0MH0.Z46h1WZ-2jsXyg43r2M0okgeLoSEzrq-ULHRMS-EW6r3ccxYkXTZ5mNJO5Aw1qBAkRI5NX9t8zXc1sbUxt8WzA"),
+    "API_KEY": os.environ.get("AI_API_KEY", "io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6Ijc3YmJkZTE2LTIwZmQtNDI0OS1hNDUxLTRhNjFjZWZmNzFkZSIsImV4cCI6NDg5OTU5MDk1MH0.hfjAFzMcTse2YZF4D_y2849zQaI62EascTdAeHI_C4OEPixfFAaU-iqugvuO-8gD7c1iDhNG0c1wpq4v_9Nn6w"),
     "DEFAULT_SYSTEM_PROMPT": "Вы - полезный AI-ассистент с энциклопедическими знаниями. Предоставляйте точные и информативные ответы. Вы обладаете обширными знаниями о различных исторических личностях, включая писателей, ученых и философов, таких как Пушкин, Толстой, Гоголь, Эйнштейн, Тесла, Ньютон, Сократ, и многих других. Для технических вопросов и примеров кода используйте Markdown-форматирование.",
     "MAX_MESSAGE_LENGTH": 4096,
     "MAX_CONTEXT_LENGTH": 50,  # Увеличено количество сообщений в истории
